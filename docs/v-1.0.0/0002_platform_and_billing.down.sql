@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS account_subscriptions;
+DROP TABLE IF EXISTS account_feature_overrides;
+DROP TABLE IF EXISTS account_status_log;
+DROP TABLE IF EXISTS accounts;
+DROP TABLE IF EXISTS plan_features;
+DROP TABLE IF EXISTS subscription_plans;
+DROP TABLE IF EXISTS features;
+DROP TABLE IF EXISTS platform_admins;
+DROP TABLE IF EXISTS users;

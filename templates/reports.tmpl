@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics Reports - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    
+    <main class="main-view">
+      <div class="page-header">
+        <div class="page-title">
+          <h2>Performance Analytics</h2>
+          <p>Analyze business revenue, popular dishes, payment distributions, and inventory</p>
+        </div>
+        <div>
+          {{ if .CanExportData }}
+            <a id="export-btn" href="/reports/export?start_date={{ .StartDate }}&end_date={{ .EndDate }}" class="btn btn-secondary" style="min-height: 40px;">
+              📥 Export CSV
+            </a>
+          {{ else }}
+            <a href="/billing" class="btn btn-secondary" style="min-height: 40px; color: var(--ink-dim);" title="Upgrade to Pro or Enterprise for CSV/Excel data exports">
+              🔒 Export CSV (Pro Feature)
+            </a>
+          {{ end }}
+        </div>
+      </div>
+
+      <!-- Filters Form (HTMX powered) -->
+      <div class="card" style="padding: 16px; margin-bottom: 24px;">
+        <form hx-get="/reports" hx-target="#report-results" hx-swap="innerHTML" class="grid grid-3" style="align-items: flex-end; gap: 16px;">
+          <div class="form-group" style="margin: 0;">
+            <label class="form-label" for="start-date">Start Date</label>
+            <input class="form-control" type="date" id="start-date" name="start_date" value="{{ .StartDate }}" onchange="updateExportLink()">
+          </div>
+          <div class="form-group" style="margin: 0;">
+            <label class="form-label" for="end-date">End Date</label>
+            <input class="form-control" type="date" id="end-date" name="end_date" value="{{ .EndDate }}" onchange="updateExportLink()">
+          </div>
+          <button type="submit" class="btn btn-primary" style="width: 100%; min-height: 42px;">Apply Filter</button>
+        </form>
+      </div>
+
+      <!-- Dynamic HTMX Results Container -->
+      <div id="report-results">
+        {{ template "reports_fragment" . }}
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function updateExportLink() {
+      const s = document.getElementById('start-date').value;
+      const e = document.getElementById('end-date').value;
+      const btn = document.getElementById('export-btn');
+      if (btn) {
+        btn.href = `/reports/export?start_date=${s}&end_date=${e}`;
+      }
+    }
+  </script>
+</body>
+</html>
+
+{{ define "reports_fragment" }}
+<!-- Stats Cards -->
+<div class="grid grid-2" style="margin-bottom: 24px;">
+  <div class="stat-card">
+    <span class="stat-label">Total Revenue</span>
+    <span class="stat-value" style="color: var(--status-good);">৳{{ formatPrice .TotalRevenue }}</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Total Manual Discounts Logged</span>
+    <span class="stat-value" style="color: var(--status-danger);">৳{{ formatPrice .DiscountsGiven }}</span>
+  </div>
+</div>
+
+<div class="grid grid-2" style="margin-bottom: 24px; align-items: start;">
+  <!-- Top items -->
+  <div class="card">
+    <h3 style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px;">Top 5 Selling Items</h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Dish / Item</th>
+          <th class="text-right">Qty Sold</th>
+          <th class="text-right">Total Revenue</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .TopItems }}
+          <tr>
+            <td style="font-weight: 500;">{{ .Name }}</td>
+            <td class="text-right mono-num">{{ .Quantity }}</td>
+            <td class="text-right mono-num" style="font-weight:600;">৳{{ formatPrice .Amount }}</td>
+          </tr>
+        {{ else }}
+          <tr>
+            <td colspan="3" style="text-align: center; color: var(--ink-dim); padding: 16px;">No data in this period</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Sales by category -->
+  <div class="card">
+    <h3 style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px;">Sales by Menu Category</h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Category Name</th>
+          <th class="text-right">Total Items Sold</th>
+          <th class="text-right">Revenue</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .SalesByCategory }}
+          <tr>
+            <td style="font-weight: 500;">{{ .Name }}</td>
+            <td class="text-right mono-num">{{ .Quantity }}</td>
+            <td class="text-right mono-num" style="font-weight:600;">৳{{ formatPrice .Amount }}</td>
+          </tr>
+        {{ else }}
+          <tr>
+            <td colspan="3" style="text-align: center; color: var(--ink-dim); padding: 16px;">No data in this period</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid grid-2" style="margin-bottom: 24px; align-items: start;">
+  <!-- Payment methods distribution -->
+  <div class="card">
+    <h3 style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px;">Payment Method Distribution</h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Payment Type / Wallet</th>
+          <th class="text-right">Total Collected</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .PaymentMethods }}
+          <tr>
+            <td style="font-weight: 500; text-transform: uppercase;">{{ .Method }}</td>
+            <td class="text-right mono-num" style="font-weight:600;">৳{{ formatPrice .Amount }}</td>
+          </tr>
+        {{ else }}
+          <tr>
+            <td colspan="2" style="text-align: center; color: var(--ink-dim); padding: 16px;">No payments recorded in this period</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Price overrides audit trail -->
+  <div class="card">
+    <h3 style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px;">Manual Discounts Audit Log</h3>
+    <table class="data-table" style="font-size: 13px;">
+      <thead>
+        <tr>
+          <th>Time & User</th>
+          <th>Item / Dish</th>
+          <th class="text-right">Discount</th>
+          <th>Justification</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .DiscountAudits }}
+          <tr>
+            <td>
+              <small class="mono-num">{{ formatTime .CreatedAt }}</small><br>
+              <span style="font-weight: 600;">{{ .User }}</span>
+            </td>
+            <td>{{ .Item }}</td>
+            <td class="text-right mono-num" style="color: var(--status-danger); font-weight: 600;">৳{{ formatPrice .Discount }}</td>
+            <td><small style="color: var(--ink-dim);">{{ .Reason }}</small></td>
+          </tr>
+        {{ else }}
+          <tr>
+            <td colspan="4" style="text-align: center; color: var(--ink-dim); padding: 16px;">No overrides recorded in this period</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Current Inventory Levels in Reports -->
+<div class="card" style="margin-bottom: 24px;">
+  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px;">
+    <h3 style="margin: 0;">Current Inventory Levels</h3>
+    <a href="/inventory" class="btn btn-secondary" style="min-height: 28px; height: 28px; padding: 0 8px; font-size: 12px;">Manage Stock →</a>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th class="text-right">Current Stock</th>
+        <th class="text-right">Reorder Threshold</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .InventoryItems }}
+        <tr>
+          <td style="font-weight: 500;">{{ .Name }}</td>
+          <td class="text-right mono-num" style="font-weight: 600;">{{ formatQty .CurrentQuantity }} {{ .Unit }}</td>
+          <td class="text-right mono-num" style="color: var(--ink-dim);">
+            {{ if .ReorderThreshold }}{{ formatFloat .ReorderThreshold }} {{ .Unit }}{{ else }}--{{ end }}
+          </td>
+          <td>
+            {{ if isOutOfStock .CurrentQuantity }}
+              <span style="color: var(--status-danger); font-weight: 600; font-size: 12px;">● Out of stock</span>
+            {{ else if isLowStock .CurrentQuantity .ReorderThreshold }}
+              <span style="color: var(--status-warn); font-weight: 600; font-size: 12px;">● Low stock</span>
+            {{ else }}
+              <span style="color: var(--status-good); font-weight: 600; font-size: 12px;">● Healthy</span>
+            {{ end }}
+          </td>
+        </tr>
+      {{ else }}
+        <tr>
+          <td colspan="4" style="text-align: center; color: var(--ink-dim); padding: 16px;">No inventory items tracked yet.</td>
+        </tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ end }}

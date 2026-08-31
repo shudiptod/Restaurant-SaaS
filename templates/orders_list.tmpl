@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orders Management - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    
+    <main class="main-view">
+      <div class="page-header">
+        <div class="page-title">
+          <h2>Order Operations</h2>
+          <p>Punch new orders, manage active sessions, view sales history</p>
+        </div>
+        <div>
+          <button class="btn btn-primary" onclick="document.getElementById('new-order-modal').style.display='flex'">
+            + New POS Order
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="align-items: start;">
+        <!-- Active Orders Card -->
+        <div class="card">
+          <h3 style="margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
+            Active Orders <span class="table-status-dot status-dot-warn" style="margin-left: 6px; width: 8px; height: 8px;"></span>
+          </h3>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Opened At</th>
+                <th class="text-right">Total</th>
+                <th class="text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{ range .ActiveOrders }}
+                <tr>
+                  <td style="font-weight: 600;">{{ .TableName }}</td>
+                  <td class="mono-num">{{ formatTime .OpenedAt }}</td>
+                  <td class="text-right mono-num" style="font-weight: 600;">৳{{ formatPrice .TotalAmount }}</td>
+                  <td class="text-right">
+                    <a href="/orders/{{ .ID }}" class="btn btn-primary" style="min-height: 32px; height: 32px; padding: 4px 12px; font-size: 12px;">POS Screen</a>
+                  </td>
+                </tr>
+              {{ else }}
+                <tr>
+                  <td colspan="4" style="text-align: center; color: var(--ink-dim); padding: 24px;">No active orders right now. Click "+ New POS Order" to start one.</td>
+                </tr>
+              {{ end }}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Closed/History Orders Card -->
+        <div class="card">
+          <h3 style="margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
+            Recent Invoiced History <span class="table-status-dot status-dot-good" style="margin-left: 6px; width: 8px; height: 8px;"></span>
+          </h3>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Closed At</th>
+                <th>Status</th>
+                <th class="text-right">Revenue</th>
+                <th class="text-right">Receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{ range .ClosedOrders }}
+                <tr>
+                  <td style="font-weight: 500;">{{ .TableName }}</td>
+                  <td class="mono-num">{{ if .ClosedAt }}{{ formatTime .ClosedAt }}{{ else }}--{{ end }}</td>
+                  <td>
+                    {{ if eq .Status "closed" }}
+                      <span style="color: var(--status-good); font-weight: 600; font-size: 12px;">Paid</span>
+                    {{ else }}
+                      <span style="color: var(--status-danger); font-weight: 600; font-size: 12px;">Cancelled</span>
+                    {{ end }}
+                  </td>
+                  <td class="text-right mono-num" style="font-weight: 600;">৳{{ formatPrice .TotalAmount }}</td>
+                  <td class="text-right">
+                    {{ if eq .Status "closed" }}
+                      <a href="/invoices/{{ .ID }}/pdf" target="_blank" class="btn btn-secondary" style="min-height: 32px; height: 32px; padding: 4px 12px; font-size: 12px;">Print</a>
+                    {{ else }}
+                      --
+                    {{ end }}
+                  </td>
+                </tr>
+              {{ else }}
+                <tr>
+                  <td colspan="5" style="text-align: center; color: var(--ink-dim); padding: 24px;">No recently completed orders.</td>
+                </tr>
+              {{ end }}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- New Order Modal -->
+      <div class="modal-backdrop" id="new-order-modal" style="display: none;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>Start POS Session</h3>
+            <button class="btn btn-secondary" style="min-height:30px; min-width:30px; padding:0;" onclick="document.getElementById('new-order-modal').style.display='none'">X</button>
+          </div>
+          <form action="/orders/create" method="POST">
+            <div class="modal-body">
+              <div class="form-group">
+                <label class="form-label" for="table-select">Select Table</label>
+                <select class="form-control" id="table-select" name="table_id">
+                  <option value="">Takeaway / Walk-in</option>
+                  {{ range .AvailableTables }}
+                    <option value="{{ .ID }}">{{ .Name }} ({{ .Capacity }} pax)</option>
+                  {{ end }}
+                </select>
+                <p style="font-size: 12px; color: var(--ink-dim); margin-top: 6px;">Note: Table status will switch to "Occupied" automatically.</p>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('new-order-modal').style.display='none'">Cancel</button>
+              <button type="submit" class="btn btn-primary">Start Order</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

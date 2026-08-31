@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    
+    <main class="main-view">
+      <div class="page-header">
+        <div class="page-title">
+          <h2>Dashboard — {{ .RestaurantName }}</h2>
+          <p>Today's overview, floor statistics, and inventory state</p>
+        </div>
+      </div>
+
+      <!-- Numbers-Forward Stats Grid -->
+      <div class="grid grid-4" style="margin-bottom: 32px;">
+        <div class="stat-card">
+          <span class="stat-label">Today's Total Sales</span>
+          <span class="stat-value" style="color: var(--brand);">৳{{ formatPrice .Stats.TodaySales }}</span>
+        </div>
+        
+        <div class="stat-card">
+          <span class="stat-label">Active Open Orders</span>
+          <span class="stat-value" style="color: var(--status-warn);">{{ .Stats.OpenOrders }}</span>
+        </div>
+        
+        <div class="stat-card">
+          <span class="stat-label">Table Occupancy Rate</span>
+          <span class="stat-value" style="color: var(--status-pending);">
+            {{ printf "%.1f" .Stats.OccupiedPct }}%
+          </span>
+          <div style="font-size: 12px; color: var(--ink-dim); margin-top: 4px;">
+            {{ .Stats.OccupiedTables }} of {{ .Stats.TotalTables }} tables occupied
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <span class="stat-label">Inventory Alert</span>
+          {{ if gt .Stats.LowStockCount 0 }}
+            <span class="stat-value" style="color: var(--status-warn);">{{ .Stats.LowStockCount }}</span>
+            <div style="font-size: 12px; color: var(--status-warn); margin-top: 4px;">
+              Items at/below reorder level
+            </div>
+          {{ else }}
+            <span class="stat-value" style="color: var(--status-good);">0</span>
+            <div style="font-size: 12px; color: var(--status-good); margin-top: 4px;">
+              All items in healthy stock
+            </div>
+          {{ end }}
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <!-- Quick Actions Card -->
+        <div class="card" style="display: flex; flex-direction: column; gap: 16px;">
+          <h3 style="border-bottom: 1px solid var(--border); padding-bottom: 8px;">Operations Quick Actions</h3>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <a href="/orders" class="btn btn-primary" style="height: auto; padding: 16px; flex-direction: column; gap: 8px;">
+              <span style="font-size: 20px;">🛎️</span>
+              <span>Take POS Order</span>
+            </a>
+            <a href="/tables" class="btn btn-secondary" style="height: auto; padding: 16px; flex-direction: column; gap: 8px;">
+              <span style="font-size: 20px;">🪑</span>
+              <span>Dining Tables</span>
+            </a>
+            <a href="/inventory" class="btn btn-secondary" style="height: auto; padding: 16px; flex-direction: column; gap: 8px;">
+              <span style="font-size: 20px;">📦</span>
+              <span>Inventory Stock</span>
+            </a>
+            <a href="/menu" class="btn btn-secondary" style="height: auto; padding: 16px; flex-direction: column; gap: 8px;">
+              <span style="font-size: 20px;">📋</span>
+              <span>Menu Dishes</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Plan Info Card -->
+        <div class="card" style="display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <h3 style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px;">Reporting Feature Status</h3>
+            {{ if .Consolidated }}
+              <div style="background-color: #EBF5EB; border: 1px solid var(--status-good); padding: 16px; border-radius: var(--radius); display: flex; gap: 12px; align-items: flex-start;">
+                <span style="font-size: 18px; color: var(--status-good);">✓</span>
+                <div>
+                  <strong style="color: var(--status-good);">Consolidated Reporting Active</strong>
+                  <p style="font-size: 13px; color: var(--ink-dim); margin-top: 4px;">You have access to advanced cross-restaurant reports because of your subscription plan.</p>
+                </div>
+              </div>
+            {{ else }}
+              <div style="background-color: #FFF8F2; border: 1px solid var(--status-warn); padding: 16px; border-radius: var(--radius); display: flex; gap: 12px; align-items: flex-start;">
+                <span style="font-size: 18px; color: var(--status-warn);">⚠️</span>
+                <div>
+                  <strong style="color: var(--status-warn);">Single Restaurant Reporting Mode</strong>
+                  <p style="font-size: 13px; color: var(--ink-dim); margin-top: 4px;">Cross-restaurant consolidated reporting is locked. Upgrade your subscription under Billing to enable it.</p>
+                </div>
+              </div>
+            {{ end }}
+          </div>
+          <div style="margin-top: 16px; text-align: right;">
+            <a href="/reports" class="btn btn-secondary">Go to Analytics Reports →</a>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

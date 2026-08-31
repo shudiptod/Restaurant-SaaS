@@ -1,0 +1,77 @@
+{{ define "sidebar" }}
+<div class="sidebar">
+  <div>
+    <div class="logo-section">
+      <h1>RMS SaaS</h1>
+      {{ if .User.Restaurants }}
+      <form action="/switch-restaurant" method="POST" id="restaurant-switch-form">
+        <select name="restaurant_id" class="restaurant-select" onchange="document.getElementById('restaurant-switch-form').submit()">
+          {{ $activeId := .ActiveRestaurantID }}
+          {{ range .User.Restaurants }}
+            <option value="{{ .RestaurantID }}" {{ if eq .RestaurantID $activeId }}selected{{ end }}>
+              {{ .RestaurantName }}
+            </option>
+          {{ end }}
+        </select>
+      </form>
+      {{ end }}
+    </div>
+    
+    <nav class="nav-links">
+      <li class="nav-item {{ if eq .ActiveNav "dashboard" }}active{{ end }}">
+        <a href="/">
+          <span>📊</span> Dashboard
+        </a>
+      </li>
+      <li class="nav-item {{ if eq .ActiveNav "tables" }}active{{ end }}">
+        <a href="/tables">
+          <span>🪑</span> Tables
+        </a>
+      </li>
+      <li class="nav-item {{ if eq .ActiveNav "orders" }}active{{ end }}">
+        <a href="/orders">
+          <span>🛎️</span> POS Orders
+        </a>
+      </li>
+      <li class="nav-item {{ if eq .ActiveNav "menu" }}active{{ end }}">
+        <a href="/menu">
+          <span>📋</span> Menu Setup
+        </a>
+      </li>
+      <li class="nav-item {{ if eq .ActiveNav "inventory" }}active{{ end }}">
+        <a href="/inventory">
+          <span>📦</span> Inventory
+        </a>
+      </li>
+      <li class="nav-item {{ if eq .ActiveNav "reports" }}active{{ end }}">
+        <a href="/reports">
+          <span>📈</span> Reports
+        </a>
+      </li>
+      <li class="nav-item {{ if eq .ActiveNav "billing" }}active{{ end }}">
+        <a href="/billing">
+          <span>💳</span> Billing
+        </a>
+      </li>
+    </nav>
+  </div>
+  
+  <div class="sidebar-footer">
+    <div class="user-info">
+      <span class="user-name">{{ .User.FullName }}</span>
+      <span class="user-role">
+        {{ if .User.IsPlatformAdmin }}
+          Platform Admin ({{ .User.PlatformRole }})
+        {{ else }}
+          Owner / Admin
+        {{ end }}
+      </span>
+    </div>
+    <form action="/logout" method="POST" style="margin: 0;">
+      <button type="submit" class="btn btn-secondary" style="width: 100%; min-height: 40px; padding: 6px;">
+        Log Out
+      </button>
+    </form>
+  </div>
+</div>
+{{ end }}

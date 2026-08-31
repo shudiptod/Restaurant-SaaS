@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POS Order Entry - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    body {
+      overflow: hidden; /* Lock viewport for app look */
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    
+    <main class="main-view" style="display: flex; flex-direction: column; height: 100vh; overflow: hidden; padding-bottom: 16px;">
+      <div class="page-header" style="margin-bottom: 16px;">
+        <div class="page-title">
+          <h2 style="font-size: 20px;">Active POS Session — Table: <span style="color: var(--brand);">{{ .Order.TableName }}</span></h2>
+          <p style="font-size: 12px; margin-top: 2px;">Order ID: {{ .Order.ID }}</p>
+        </div>
+        <div>
+          <a href="/orders" class="btn btn-secondary" style="min-height: 38px; height: 38px;">← Back to Lists</a>
+        </div>
+      </div>
+
+      <div class="pos-container">
+        <!-- Left: Menu Selection Grid -->
+        <div class="pos-menu-panel">
+          <!-- Category Selector -->
+          <div class="category-tabs">
+            <button class="category-tab active" onclick="filterCategory('all', event)">All Items</button>
+            {{ range .Categories }}
+              <button class="category-tab" onclick="filterCategory('{{ .ID }}', event)">{{ .Name }}</button>
+            {{ end }}
+          </div>
+
+          <!-- Items Grid -->
+          <div class="menu-items-grid">
+            {{ $orderID := .Order.ID }}
+            {{ range .MenuItems }}
+              <div class="menu-item-card" data-cat="{{ .CategoryID }}"
+                   hx-post="/orders/{{ $orderID }}/items/add"
+                   hx-vals='{"menu_item_id": "{{ .ID }}"}'
+                   hx-target="#pos-order-sidebar"
+                   hx-swap="outerHTML">
+                <span class="menu-item-name">{{ .Name }}</span>
+                <span class="menu-item-price mono-num">৳{{ formatPrice .Price }}</span>
+              </div>
+            {{ else }}
+              <div style="grid-column: span 4; color: var(--ink-dim); text-align: center; padding: 40px;">
+                No menu items available. Ensure menu is set up and items are marked available.
+              </div>
+            {{ end }}
+          </div>
+        </div>
+
+        <!-- Right: Current Order Details Sidebar -->
+        {{ template "pos_order_sidebar" . }}
+      </div>
+
+      <!-- Price Override Discount Modal -->
+      <div class="modal-backdrop" id="override-modal" style="display: none;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>Manual Price Override</h3>
+            <button class="btn btn-secondary" style="min-height:30px; min-width:30px; padding:0;" onclick="closeOverrideModal()">X</button>
+          </div>
+          <form id="override-form" method="POST"
+                hx-post=""
+                hx-target="#pos-order-sidebar"
+                hx-swap="outerHTML"
+                hx-on::after-request="closeOverrideModal()">
+            <div class="modal-body">
+              <p style="font-size: 13px; color: var(--ink-dim); margin-bottom: 16px;">
+                You are overriding unit price for <strong id="override-item-name">item</strong>. Current: <strong id="override-item-curr">৳0.00</strong>
+              </p>
+              <div class="form-group">
+                <label class="form-label" for="new-price">New Override Price (BDT)</label>
+                <input class="form-control" type="number" id="new-price" name="price" step="0.01" min="0" required placeholder="0.00">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="override-reason">Justification / Reason (Audited)</label>
+                <input class="form-control" type="text" id="override-reason" name="reason" required placeholder="e.g. Complimentary for regular customer, staff meal">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" onclick="closeOverrideModal()">Cancel</button>
+              <button type="submit" class="btn btn-primary">Apply Price</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Checkout / Pay & Close Modal -->
+      <div class="modal-backdrop" id="checkout-modal" style="display: none;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>Collect Payment</h3>
+            <button class="btn btn-secondary" style="min-height:30px; min-width:30px; padding:0;" onclick="document.getElementById('checkout-modal').style.display='none'">X</button>
+          </div>
+          <form action="/orders/{{ .Order.ID }}/close" method="POST">
+            <div class="modal-body">
+              <div style="text-align: center; margin-bottom: 24px;">
+                <span style="font-size: 14px; color: var(--ink-dim);">Grand Total Amount Due</span>
+                <h2 class="mono-num" style="font-size: 32px; color: var(--brand); margin-top: 4px;" id="modal-grand-total">৳{{ formatPrice .Order.TotalAmount }}</h2>
+              </div>
+              
+              <div class="form-group">
+                <label class="form-label">Payment Method</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <label style="display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;">
+                    <input type="radio" name="payment_method" value="cash" checked>
+                    <div>
+                      <strong>Cash Payment</strong>
+                      <div style="font-size: 12px; color: var(--ink-dim);">Diner pays in cash at table/counter</div>
+                    </div>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;">
+                    <input type="radio" name="payment_method" value="card">
+                    <div>
+                      <strong>Credit / Debit Card</strong>
+                      <div style="font-size: 12px; color: var(--ink-dim);">Process via standard card terminal</div>
+                    </div>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;">
+                    <input type="radio" name="payment_method" value="bkash_personal">
+                    <div>
+                      <strong>bKash Personal / Wallet</strong>
+                      <div style="font-size: 12px; color: var(--ink-dim);">Diner scans QR or sends money to personal number</div>
+                    </div>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;">
+                    <input type="radio" name="payment_method" value="nagad">
+                    <div>
+                      <strong>Nagad Wallet</strong>
+                      <div style="font-size: 12px; color: var(--ink-dim);">Direct payment via Nagad MFS</div>
+                    </div>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;">
+                    <input type="radio" name="payment_method" value="rocket">
+                    <div>
+                      <strong>Other Mobile Financial Service (MFS)</strong>
+                      <div style="font-size: 12px; color: var(--ink-dim);">Rocket, Upay, or alternative digital wallets</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('checkout-modal').style.display='none'">Cancel</button>
+              <button type="submit" class="btn btn-primary">Complete Order & Print Invoice</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function filterCategory(catID, ev) {
+      const tabs = document.querySelectorAll('.category-tab');
+      tabs.forEach(tab => tab.classList.remove('active'));
+      if (ev && ev.target) {
+        ev.target.classList.add('active');
+      }
+
+      const cards = document.querySelectorAll('.menu-item-card');
+      cards.forEach(card => {
+        if (catID === 'all' || card.getAttribute('data-cat') === catID) {
+          card.style.display = 'flex';
+        } else {
+          card.style.display = 'none';
+        }
+      });
+    }
+
+    function openOverrideModal(lineID, itemName, currPrice) {
+      document.getElementById('override-item-name').innerText = itemName;
+      document.getElementById('override-item-curr').innerText = '৳' + Number(currPrice).toFixed(2);
+      document.getElementById('new-price').value = Number(currPrice).toFixed(2);
+      
+      const form = document.getElementById('override-form');
+      form.setAttribute('hx-post', '/orders/{{ .Order.ID }}/items/' + lineID + '/override');
+      htmx.process(form);
+      
+      document.getElementById('override-modal').style.display = 'flex';
+    }
+
+    function closeOverrideModal() {
+      document.getElementById('override-modal').style.display = 'none';
+    }
+  </script>
+</body>
+</html>
+
+{{ define "pos_order_sidebar" }}
+<div class="pos-order-sidebar" id="pos-order-sidebar">
+  <div class="sidebar-order-header">
+    <h3 style="font-size: 16px;">Current Order Lines</h3>
+  </div>
+
+  <div class="sidebar-order-items">
+    {{ $orderID := .Order.ID }}
+    {{ range .OrderItems }}
+      <div class="order-item-row" style="border-bottom: 1px solid var(--border); padding-bottom: 12px;">
+        <div class="order-item-detail">
+          <span class="order-item-qty-name">{{ .Quantity }}x {{ .MenuItemName }}</span>
+          <span class="mono-num" style="font-size: 13px; font-weight: 500; color: var(--ink-dim);">
+            @ ৳{{ formatPrice .UnitPrice }}
+          </span>
+          
+          <div class="order-item-actions">
+            <button type="button" class="qty-btn"
+                    hx-post="/orders/{{ $orderID }}/items/{{ .ID }}/qty"
+                    hx-vals='{"action": "dec"}'
+                    hx-target="#pos-order-sidebar"
+                    hx-swap="outerHTML">-</button>
+            <button type="button" class="qty-btn"
+                    hx-post="/orders/{{ $orderID }}/items/{{ .ID }}/qty"
+                    hx-vals='{"action": "inc"}'
+                    hx-target="#pos-order-sidebar"
+                    hx-swap="outerHTML">+</button>
+            <button type="button" class="btn btn-secondary" style="min-height:24px; height:24px; padding:0 8px; font-size:11px; margin-left:8px;"
+                    onclick="openOverrideModal('{{ .ID }}', '{{ .MenuItemName }}', {{ formatPrice .UnitPrice }})">
+              Discount
+            </button>
+          </div>
+        </div>
+        <div class="mono-num" style="font-weight: 600; text-align: right;">
+          ৳{{ formatPrice (multiply .Quantity .UnitPrice) }}
+        </div>
+      </div>
+    {{ else }}
+      <div style="color: var(--ink-dim); text-align: center; margin: auto;">
+        Order is empty.<br>Tap menu items on the left to add.
+      </div>
+    {{ end }}
+  </div>
+
+  <!-- Sidebar Totals & Check-out -->
+  <div class="sidebar-order-totals">
+    <div class="total-row">
+      <span>Subtotal</span>
+      <span class="mono-num">৳{{ formatPrice .Order.Subtotal }}</span>
+    </div>
+    <div class="total-row" style="color: var(--status-good);">
+      <span>VAT / Tax (15% Inc)</span>
+      <span class="mono-num">৳{{ formatPrice .Order.TaxAmount }}</span>
+    </div>
+    <div class="total-row">
+      <span>Discounts</span>
+      <span class="mono-num">-৳{{ formatPrice .Order.DiscountAmount }}</span>
+    </div>
+    <div class="total-row grand-total">
+      <span>Total due</span>
+      <span class="mono-num">৳{{ formatPrice .Order.TotalAmount }}</span>
+    </div>
+  </div>
+
+  <div class="sidebar-order-actions">
+    {{ if .OrderItems }}
+      <button class="btn btn-primary" style="flex-grow: 1;" onclick="document.getElementById('checkout-modal').style.display='flex'">
+        Collect Payment & Close
+      </button>
+    {{ else }}
+      <button class="btn btn-primary" style="flex-grow: 1;" disabled>
+        Empty Order
+      </button>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Billing Setup - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    
+    <main class="main-view">
+      <div class="page-header">
+        <div class="page-title">
+          <h2>Billing & Subscription</h2>
+          <p>Configure subscription plans, manage account features, check invoices</p>
+        </div>
+      </div>
+
+      <!-- Current Subscription Status -->
+      <div class="card grid grid-2" style="align-items: center; border-left: 4px solid var(--brand);">
+        <div>
+          <span style="font-size: 12px; color: var(--ink-dim); text-transform: uppercase; font-weight: 600;">Active Plan</span>
+          <h2 style="font-size: 24px; margin: 4px 0;">{{ .Subscription.PlanName }} Plan</h2>
+          <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--ink-dim);">
+            <div>Period: <strong class="mono-num" style="color: var(--ink);">{{ formatTime .Subscription.PeriodStart }}</strong> to <strong class="mono-num" style="color: var(--ink);">{{ formatTime .Subscription.PeriodEnd }}</strong></div>
+            <div>
+              Status: 
+              <span class="table-status-dot {{ if eq .Subscription.Status "active" }}status-dot-good{{ else if eq .Subscription.Status "past_due" }}status-dot-warn{{ else }}status-dot-danger{{ end }}" style="width: 8px; height: 8px;"></span>
+              <strong style="text-transform: capitalize; color: var(--ink);">{{ .Subscription.Status }}</strong>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Limits display -->
+        <div style="border-left: 1px solid var(--border); padding-left: 24px; display: flex; flex-direction: column; gap: 8px; font-size: 14px;">
+          <h4 style="font-size: 14px; color: var(--brand);">Plan Capabilities & Usage Limits</h4>
+          <div style="display: flex; justify-content: space-between;">
+            <span>Max Dining Locations:</span>
+            <strong class="mono-num">{{ .Subscription.LimitRest }}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span>Max Tables per Restaurant:</span>
+            <strong class="mono-num">{{ .Subscription.LimitTables }}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span>Max Staff Logins:</span>
+            <strong class="mono-num">{{ .Subscription.LimitUsers }}</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Available Plans Pricing -->
+      <h3 style="margin: 32px 0 16px 0;">Select Subscription Tier</h3>
+      <div class="grid grid-3" style="margin-bottom: 32px; align-items: stretch;">
+        <!-- Basic Plan -->
+        <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; {{ if eq .Subscription.PlanCode "basic" }}border-color: var(--brand); background-color: #F6F8FB;{{ end }}">
+          <div>
+            <h4 style="font-size: 18px;">Basic</h4>
+            <div class="mono-num" style="font-size: 28px; font-weight: bold; margin: 12px 0; color: var(--brand);">৳999 <small style="font-size: 12px; color: var(--ink-dim); font-weight: normal;">/ month</small></div>
+            <ul style="list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--ink-dim); margin-top: 16px;">
+              <li>✓ <strong>1</strong> Dining Location</li>
+              <li>✓ Up to <strong>15</strong> Tables per rest</li>
+              <li>✓ Up to <strong>3</strong> Staff accounts</li>
+              <li>✗ Advanced Reports</li>
+              <li>✗ Consolidated Rollups</li>
+            </ul>
+          </div>
+          <form action="/billing/checkout" method="POST" style="margin-top: 24px; margin-bottom: 0;">
+            <input type="hidden" name="plan_code" value="basic">
+            <button type="submit" class="btn btn-secondary" style="width: 100%;" {{ if eq .Subscription.PlanCode "basic" }}disabled{{ end }}>
+              {{ if eq .Subscription.PlanCode "basic" }}Current Plan{{ else }}Switch to Basic{{ end }}
+            </button>
+          </form>
+        </div>
+
+        <!-- Pro Plan -->
+        <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; position: relative; {{ if eq .Subscription.PlanCode "pro" }}border-color: var(--brand); background-color: #F6F8FB;{{ end }}">
+          <div style="position: absolute; top: -12px; right: 16px; background-color: var(--status-good); color: white; padding: 4px 8px; font-size: 11px; font-weight: 600; border-radius: var(--radius);">Popular</div>
+          <div>
+            <h4 style="font-size: 18px;">Pro</h4>
+            <div class="mono-num" style="font-size: 28px; font-weight: bold; margin: 12px 0; color: var(--brand);">৳2,499 <small style="font-size: 12px; color: var(--ink-dim); font-weight: normal;">/ month</small></div>
+            <ul style="list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--ink-dim); margin-top: 16px;">
+              <li>✓ <strong>5</strong> Dining Locations</li>
+              <li>✓ Up to <strong>50</strong> Tables per rest</li>
+              <li>✓ Up to <strong>20</strong> Staff accounts</li>
+              <li>✓ Advanced Analytics Reports</li>
+              <li>✓ Consolidated Rollup View</li>
+              <li>✓ Custom Invoice Branding</li>
+            </ul>
+          </div>
+          <form action="/billing/checkout" method="POST" style="margin-top: 24px; margin-bottom: 0;">
+            <input type="hidden" name="plan_code" value="pro">
+            <button type="submit" class="btn btn-primary" style="width: 100%;" {{ if eq .Subscription.PlanCode "pro" }}disabled{{ end }}>
+              {{ if eq .Subscription.PlanCode "pro" }}Current Plan{{ else }}Switch to Pro{{ end }}
+            </button>
+          </form>
+        </div>
+
+        <!-- Enterprise Plan -->
+        <div class="card" style="display: flex; flex-direction: column; justify-content: space-between; {{ if eq .Subscription.PlanCode "enterprise" }}border-color: var(--brand); background-color: #F6F8FB;{{ end }}">
+          <div>
+            <h4 style="font-size: 18px;">Enterprise</h4>
+            <div class="mono-num" style="font-size: 28px; font-weight: bold; margin: 12px 0; color: var(--brand);">৳7,999 <small style="font-size: 12px; color: var(--ink-dim); font-weight: normal;">/ month</small></div>
+            <ul style="list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--ink-dim); margin-top: 16px;">
+              <li>✓ <strong>Unlimited</strong> Locations</li>
+              <li>✓ <strong>Unlimited</strong> Tables</li>
+              <li>✓ <strong>Unlimited</strong> Staff accounts</li>
+              <li>✓ Advanced Analytics Reports</li>
+              <li>✓ Consolidated Rollup View</li>
+              <li>✓ Priority Support channel</li>
+            </ul>
+          </div>
+          <form action="/billing/checkout" method="POST" style="margin-top: 24px; margin-bottom: 0;">
+            <input type="hidden" name="plan_code" value="enterprise">
+            <button type="submit" class="btn btn-secondary" style="width: 100%;" {{ if eq .Subscription.PlanCode "enterprise" }}disabled{{ end }}>
+              {{ if eq .Subscription.PlanCode "enterprise" }}Current Plan{{ else }}Switch to Enterprise{{ end }}
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Payment History Log Card -->
+      <div class="card">
+        <h3 style="margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">Subscription Invoices (bKash Logs)</h3>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Invoice ID</th>
+              <th>Transaction ID</th>
+              <th>Paid At</th>
+              <th class="text-right">Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .Payments }}
+              <tr>
+                <td style="font-weight: 500;"><small class="mono-num">#SUB-{{ .ID }}</small></td>
+                <td class="mono-num">{{ if .PdfURL }}{{ .PdfURL }}{{ else }}--{{ end }}</td>
+                <td class="mono-num">{{ formatTime .CreatedAt }}</td>
+                <td class="text-right mono-num" style="font-weight: 600;">৳{{ formatPrice .TotalAmount }}</td>
+                <td>
+                  {{ if eq .Subtotal 1 }}
+                    <span style="color: var(--status-good); font-weight: 600; font-size: 12px;">Completed</span>
+                  {{ else }}
+                    <span style="color: var(--status-danger); font-weight: 600; font-size: 12px;">Failed</span>
+                  {{ end }}
+                </td>
+              </tr>
+            {{ else }}
+              <tr>
+                <td colspan="5" style="text-align: center; color: var(--ink-dim); padding: 16px;">No subscription payment history logged.</td>
+              </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

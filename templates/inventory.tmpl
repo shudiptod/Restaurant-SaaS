@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inventory Management - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    
+    <main class="main-view">
+      <div class="page-header">
+        <div class="page-title">
+          <h2>Inventory Management — {{ .RestaurantName }}</h2>
+          <p>Track raw ingredients, stock levels, and audit all movements</p>
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <button class="btn btn-secondary" onclick="openAdjustModal('', '', '')">
+            Stock Movement (In/Out)
+          </button>
+          <button class="btn btn-primary" onclick="document.getElementById('add-item-modal').style.display='flex'">
+            + New Inventory Item
+          </button>
+        </div>
+      </div>
+
+      {{ if gt .LowStockCount 0 }}
+      <div style="background: #FDF4E7; border: 1px solid var(--status-warn); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; align-items: center; gap: 8px; color: var(--ink);">
+          <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--status-warn);"></span>
+          <strong>{{ .LowStockCount }} item(s) are at or below reorder threshold.</strong>
+        </div>
+        <span style="font-size: 13px; color: var(--ink-dim);">Restock recommended</span>
+      </div>
+      {{ end }}
+
+      <div class="grid grid-3" style="align-items: start; gap: 24px;">
+        <!-- Inventory Items List (Span 2) -->
+        <div class="card" style="grid-column: span 2;">
+          <h3 style="margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">Current Stock Levels</h3>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Item Name</th>
+                <th class="text-right">Current Stock</th>
+                <th class="text-right">Reorder Alert</th>
+                <th>Status</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{ range .Items }}
+                <tr>
+                  <td style="font-weight: 500;">
+                    {{ .Name }}
+                    {{ if .UnitCost }}
+                      <br><small style="color: var(--ink-dim); font-weight: normal;" class="mono-num">Est. Cost: ৳{{ formatUnitCost .UnitCost }}/{{ .Unit }}</small>
+                    {{ end }}
+                  </td>
+                  <td class="text-right mono-num" style="font-weight: 600; font-size: 15px;">
+                    {{ formatQty .CurrentQuantity }} <span style="font-weight: 400; font-size: 12px; color: var(--ink-dim);">{{ .Unit }}</span>
+                  </td>
+                  <td class="text-right mono-num" style="color: var(--ink-dim);">
+                    {{ formatFloat .ReorderThreshold }} {{ if .ReorderThreshold }}{{ .Unit }}{{ end }}
+                  </td>
+                  <td>
+                    {{ if isOutOfStock .CurrentQuantity }}
+                      <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--status-danger); font-size: 12px; font-weight: 600;">
+                        <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--status-danger);"></span>
+                        Out of stock
+                      </span>
+                    {{ else if isLowStock .CurrentQuantity .ReorderThreshold }}
+                      <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--status-warn); font-size: 12px; font-weight: 600;">
+                        <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--status-warn);"></span>
+                        Low stock
+                      </span>
+                    {{ else }}
+                      <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--status-good); font-size: 12px; font-weight: 600;">
+                        <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--status-good);"></span>
+                        Healthy
+                      </span>
+                    {{ end }}
+                  </td>
+                  <td class="text-right">
+                    <div style="display: inline-flex; gap: 4px;">
+                      <button type="button" class="btn btn-secondary" style="min-height: 28px; height: 28px; padding: 0 8px; font-size: 11px;"
+                              onclick="openAdjustModal('{{ .ID }}', '{{ .Name }}', '{{ .Unit }}')">
+                        Adjust
+                      </button>
+                      <form action="/inventory/items/delete/{{ .ID }}" method="POST" onsubmit="return confirm('Are you sure you want to remove {{ .Name }}?')" style="margin: 0; display: inline;">
+                        <button type="submit" class="btn btn-secondary" style="min-height: 28px; height: 28px; min-width: 28px; padding: 0 6px; font-size: 11px; color: var(--status-danger);">
+                          ✕
+                        </button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {{ else }}
+                <tr>
+                  <td colspan="5" style="text-align: center; color: var(--ink-dim); padding: 24px;">
+                    No inventory items tracked yet. Click "+ New Inventory Item" to start.
+                  </td>
+                </tr>
+              {{ end }}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Recent Adjustments Log (Span 1) -->
+        <div class="card" style="grid-column: span 1;">
+          <h3 style="margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">Recent Movements Audit</h3>
+          <div style="display: flex; flex-direction: column; gap: 12px; max-height: 520px; overflow-y: auto;">
+            {{ range .Adjustments }}
+              <div style="padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--paper); font-size: 13px;">
+                <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+                  <strong style="color: var(--ink);">{{ .ItemName }}</strong>
+                  <span class="mono-num" style="font-weight: 600; {{ if gt .ChangeQuantity 0.0 }}color: var(--status-good);{{ else }}color: var(--status-danger);{{ end }}">
+                    {{ if gt .ChangeQuantity 0.0 }}+{{ end }}{{ formatQty .ChangeQuantity }} {{ .Unit }}
+                  </span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-dim);">
+                  <span style="text-transform: capitalize;">{{ .Reason }}</span>
+                  <span>{{ formatTime .CreatedAt }}</span>
+                </div>
+                {{ if .Note }}
+                  <div style="font-size: 11px; color: var(--ink-dim); margin-top: 4px; border-top: 1px dashed var(--border); padding-top: 4px;">
+                    "{{ .Note }}" — <small>{{ .AdjustedByName }}</small>
+                  </div>
+                {{ end }}
+              </div>
+            {{ else }}
+              <div style="color: var(--ink-dim); text-align: center; padding: 24px;">No movements logged yet.</div>
+            {{ end }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Add Inventory Item Modal -->
+      <div class="modal-backdrop" id="add-item-modal" style="display: none;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>Add Inventory Item</h3>
+            <button class="btn btn-secondary" style="min-height:30px; min-width:30px; padding:0;" onclick="document.getElementById('add-item-modal').style.display='none'">X</button>
+          </div>
+          <form action="/inventory/items/add" method="POST">
+            <div class="modal-body">
+              <div class="form-group">
+                <label class="form-label" for="inv-name">Item Name</label>
+                <input class="form-control" type="text" id="inv-name" name="name" required placeholder="e.g. Basmati Rice, Cooking Oil, Beef Ribs, Napkins">
+              </div>
+              <div class="grid grid-2" style="gap: 16px;">
+                <div class="form-group">
+                  <label class="form-label" for="inv-unit">Measurement Unit</label>
+                  <input class="form-control" type="text" id="inv-unit" name="unit" required placeholder="kg, l, pcs, pack, g">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="inv-initial">Initial Stock Quantity</label>
+                  <input class="form-control" type="number" id="inv-initial" name="initial_quantity" step="0.01" min="0" value="0">
+                </div>
+              </div>
+              <div class="grid grid-2" style="gap: 16px;">
+                <div class="form-group">
+                  <label class="form-label" for="inv-thresh">Reorder Threshold (Alert Level)</label>
+                  <input class="form-control" type="number" id="inv-thresh" name="reorder_threshold" step="0.01" min="0" placeholder="Optional minimum level">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="inv-cost">Est. Unit Cost (BDT)</label>
+                  <input class="form-control" type="number" id="inv-cost" name="unit_cost" step="0.01" min="0" placeholder="e.g. 120.00">
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-item-modal').style.display='none'">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save Item</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Stock Movement Modal -->
+      <div class="modal-backdrop" id="adjust-modal" style="display: none;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>Record Stock Movement</h3>
+            <button class="btn btn-secondary" style="min-height:30px; min-width:30px; padding:0;" onclick="document.getElementById('adjust-modal').style.display='none'">X</button>
+          </div>
+          <form action="/inventory/adjustments/add" method="POST">
+            <div class="modal-body">
+              <div class="form-group">
+                <label class="form-label" for="adjust-item-select">Select Inventory Item</label>
+                <select class="form-control" id="adjust-item-select" name="inventory_item_id" required>
+                  <option value="">-- Choose Item --</option>
+                  {{ range .Items }}
+                    <option value="{{ .ID }}" data-unit="{{ .Unit }}">{{ .Name }} (Current: {{ formatQty .CurrentQuantity }} {{ .Unit }})</option>
+                  {{ end }}
+                </select>
+              </div>
+
+              <div class="grid grid-2" style="gap: 16px;">
+                <div class="form-group">
+                  <label class="form-label">Movement Direction</label>
+                  <select class="form-control" name="direction" id="adjust-direction" onchange="updateReasonOptions()">
+                    <option value="in">+ Stock In (Restock / Purchase)</option>
+                    <option value="out">- Stock Out (Usage / Wastage)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="adjust-reason">Reason</label>
+                  <select class="form-control" id="adjust-reason" name="reason" required>
+                    <option value="purchase">Purchase / Supplier delivery</option>
+                    <option value="correction">Audit correction</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="adjust-qty">Quantity <span id="adjust-unit-label" style="color: var(--ink-dim); font-weight: normal;"></span></label>
+                <input class="form-control" type="number" id="adjust-qty" name="change_quantity" step="0.001" min="0.001" required placeholder="Quantity amount">
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="adjust-note">Audit Note / Invoice Reference</label>
+                <input class="form-control" type="text" id="adjust-note" name="note" placeholder="e.g. Memo #4492 from Wholesale Market, kitchen shift usage">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('adjust-modal').style.display='none'">Cancel</button>
+              <button type="submit" class="btn btn-primary">Record Adjustment</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function openAdjustModal(itemId, itemName, unit) {
+      const select = document.getElementById('adjust-item-select');
+      if (itemId) {
+        select.value = itemId;
+      }
+      document.getElementById('adjust-unit-label').innerText = unit ? `(${unit})` : '';
+      document.getElementById('adjust-modal').style.display = 'flex';
+    }
+
+    function updateReasonOptions() {
+      const dir = document.getElementById('adjust-direction').value;
+      const reasonSelect = document.getElementById('adjust-reason');
+      reasonSelect.innerHTML = '';
+      if (dir === 'in') {
+        reasonSelect.innerHTML = `
+          <option value="purchase">Purchase / Supplier delivery</option>
+          <option value="correction">Stock count correction (+)</option>
+          <option value="other">Other</option>
+        `;
+      } else {
+        reasonSelect.innerHTML = `
+          <option value="usage">Kitchen usage / Shift consumption</option>
+          <option value="wastage">Spoilage / Wastage / Expired</option>
+          <option value="correction">Stock count correction (-)</option>
+          <option value="other">Other</option>
+        `;
+      }
+    }
+  </script>
+</body>
+</html>

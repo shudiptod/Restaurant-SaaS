@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice #{{ .Invoice.InvoiceNumber }} - Receipt</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      background-color: #F0EDE6;
+      font-family: 'IBM Plex Sans', sans-serif;
+      margin: 0;
+      padding: 40px 0;
+      display: flex;
+      justify-content: center;
+    }
+    .receipt-container {
+      width: 320px; /* Thermal printer width */
+      background-color: #FFFFFF;
+      border: 1px solid #E3DFD5;
+      padding: 24px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      font-size: 13px;
+      color: #1E1C19;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .restaurant-name {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .meta-info {
+      margin-bottom: 16px;
+      font-size: 12px;
+      color: #6B6558;
+      border-bottom: 1px dashed #E3DFD5;
+      padding-bottom: 12px;
+    }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+    }
+    .items-table th {
+      border-bottom: 1px dashed #E3DFD5;
+      font-weight: 600;
+      text-align: left;
+      padding: 6px 0;
+      font-size: 12px;
+      color: #6B6558;
+    }
+    .items-table td {
+      padding: 8px 0;
+      vertical-align: top;
+    }
+    .mono {
+      font-family: 'IBM Plex Mono', monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .totals-section {
+      border-top: 1px dashed #E3DFD5;
+      padding-top: 12px;
+      margin-bottom: 24px;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .grand-total {
+      font-size: 16px;
+      font-weight: 600;
+      border-top: 1px solid #1E1C19;
+      padding-top: 8px;
+      margin-top: 6px;
+    }
+    .footer {
+      text-align: center;
+      font-size: 12px;
+      color: #6B6558;
+      margin-top: 30px;
+      border-top: 1px dashed #E3DFD5;
+      padding-top: 16px;
+    }
+    @media print {
+      body {
+        background-color: #FFFFFF;
+        padding: 0;
+      }
+      .receipt-container {
+        border: none;
+        box-shadow: none;
+        width: 100%;
+      }
+      .no-print {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <div class="no-print" style="margin-bottom: 20px; text-align: center;">
+      <button onclick="window.print()" style="padding: 10px 20px; font-weight: 600; background-color: #2B4570; color: #FFFFFF; border: none; border-radius: 6px; cursor: pointer;">
+        🖨️ Print Receipt
+      </button>
+    </div>
+
+    <div class="receipt-container">
+      <div class="header">
+        <div class="restaurant-name">{{ .RestaurantName }}</div>
+        {{ if .RestaurantAddress }}<div style="font-size: 12px; color: #6B6558; margin-top: 4px;">{{ .RestaurantAddress }}</div>{{ end }}
+        {{ if .RestaurantPhone }}<div style="font-size: 12px; color: #6B6558;">Phone: {{ .RestaurantPhone }}</div>{{ end }}
+      </div>
+
+      <div class="meta-info">
+        <div class="meta-row">
+          <span>Invoice No:</span>
+          <span class="mono">#INV-{{ printf "%05d" .Invoice.InvoiceNumber }}</span>
+        </div>
+        <div class="meta-row">
+          <span>Table/Session:</span>
+          <span>{{ .TableName }}</span>
+        </div>
+        <div class="meta-row">
+          <span>Date:</span>
+          <span class="mono">{{ formatTime .Invoice.CreatedAt }}</span>
+        </div>
+      </div>
+
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th class="mono" style="text-align: center;">Qty</th>
+            <th class="mono" style="text-align: right;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .Items }}
+            <tr>
+              <td>{{ .MenuItemName }}</td>
+              <td class="mono" style="text-align: center;">{{ .Quantity }}</td>
+              <td class="mono" style="text-align: right;">৳{{ formatPrice (multiply .Quantity .UnitPrice) }}</td>
+            </tr>
+          {{ end }}
+        </tbody>
+      </table>
+
+      <div class="totals-section">
+        <div class="total-row">
+          <span>Subtotal</span>
+          <span class="mono">৳{{ formatPrice .Invoice.Subtotal }}</span>
+        </div>
+        <div class="total-row">
+          <span>VAT / Tax (15% Inc)</span>
+          <span class="mono">৳{{ formatPrice .Invoice.TaxAmount }}</span>
+        </div>
+        {{ if .Invoice.DiscountAmount }}
+          <div class="total-row" style="color: #B23A2E;">
+            <span>Discount Given</span>
+            <span class="mono">-৳{{ formatPrice .Invoice.DiscountAmount }}</span>
+          </div>
+        {{ end }}
+        <div class="total-row grand-total">
+          <span>Grand Total</span>
+          <span class="mono">৳{{ formatPrice .Invoice.TotalAmount }}</span>
+        </div>
+      </div>
+
+      <div class="footer">
+        <strong>Thank You For Dining With Us!</strong>
+        <p style="margin-top: 6px; font-size: 11px;">Powered by RMS SaaS</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tables Layout - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    
+    <main class="main-view">
+      <div class="page-header">
+        <div class="page-title">
+          <h2>Dining Tables — {{ .RestaurantName }}</h2>
+          <p>Manage tables, update real-time occupancy status</p>
+        </div>
+        <div>
+          <button class="btn btn-primary" onclick="document.getElementById('add-table-modal').style.display='flex'">
+            + Add Table
+          </button>
+        </div>
+      </div>
+
+      {{ if .AlertError }}
+      <div class="login-error" style="margin-bottom: 24px;">
+        {{ .AlertError }}
+      </div>
+      {{ end }}
+
+      <div class="grid grid-4">
+        {{ range .Tables }}
+          {{ template "table-card" . }}
+        {{ else }}
+          <div class="card" style="grid-column: span 4; text-align: center; color: var(--ink-dim);">
+            No tables set up yet. Click "+ Add Table" to get started.
+          </div>
+        {{ end }}
+      </div>
+
+      <!-- Add Table Modal -->
+      <div class="modal-backdrop" id="add-table-modal" style="display: none;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>Add Dining Table</h3>
+            <button class="btn btn-secondary" style="min-height:30px; min-width:30px; padding:0;" onclick="document.getElementById('add-table-modal').style.display='none'">X</button>
+          </div>
+          <form action="/tables/add" method="POST">
+            <div class="modal-body">
+              <div class="form-group">
+                <label class="form-label" for="table-name">Table Name / Number</label>
+                <input class="form-control" type="text" id="table-name" name="name" required placeholder="e.g. Table 12, Window 1">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="table-capacity">Capacity (Persons)</label>
+                <input class="form-control" type="number" id="table-capacity" name="capacity" min="1" max="100" value="4">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-table-modal').style.display='none'">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save Table</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
+
+{{ define "table-card" }}
+<div class="table-card" id="table-{{ .ID }}">
+  <div class="table-card-header">
+    <span class="table-card-title">{{ .Name }}</span>
+    <span class="table-status-dot {{ if eq .Status "available" }}status-dot-good{{ else if eq .Status "occupied" }}status-dot-warn{{ else if eq .Status "reserved" }}status-dot-pending{{ end }}"></span>
+  </div>
+  <div style="font-size: 13px; color: var(--ink-dim); margin-top: 4px;">
+    Capacity: {{ if .Capacity }}{{ .Capacity }}{{ else }}--{{ end }} pax
+  </div>
+  <div style="font-size: 13px; font-weight: 500; text-transform: capitalize; margin-top: 4px;">
+    Status: {{ .Status }}
+  </div>
+  
+  <div class="table-card-actions" style="margin-top: auto; display: flex; gap: 4px; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--border);">
+    <button class="btn btn-secondary" style="min-height: 32px; height: 32px; min-width: 44px; padding: 4px 8px; font-size: 12px;"
+            hx-post="/tables/{{ .ID }}/status?status=available"
+            hx-target="#table-{{ .ID }}"
+            hx-swap="outerHTML">
+      Free
+    </button>
+    <button class="btn btn-secondary" style="min-height: 32px; height: 32px; min-width: 44px; padding: 4px 8px; font-size: 12px; border-color: var(--status-warn); color: var(--status-warn);"
+            hx-post="/tables/{{ .ID }}/status?status=occupied"
+            hx-target="#table-{{ .ID }}"
+            hx-swap="outerHTML">
+      Occupy
+    </button>
+    <button class="btn btn-secondary" style="min-height: 32px; height: 32px; min-width: 44px; padding: 4px 8px; font-size: 12px; border-color: var(--status-pending); color: var(--status-pending);"
+            hx-post="/tables/{{ .ID }}/status?status=reserved"
+            hx-target="#table-{{ .ID }}"
+            hx-swap="outerHTML">
+      Reserve
+    </button>
+  </div>
+</div>
+{{ end }}
