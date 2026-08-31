@@ -5,11 +5,12 @@
 # ------------------------------------------
 # Stage 1: Build executable binary
 # ------------------------------------------
-FROM golang:1.24-alpine AS builder
+FROM golang:alpine AS builder
 
 WORKDIR /app
 
-# Install build essentials and SSL certificates
+# Enable automatic Go toolchain resolution and install build dependencies
+ENV GOTOOLCHAIN=auto
 RUN apk add --no-cache git ca-certificates tzdata
 
 # Copy module dependency definitions first (for efficient Docker caching)
