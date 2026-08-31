@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -14,8 +15,17 @@ type contextKey string
 
 const UserIDKey contextKey = "user_id"
 
+func cleanPostgresDSN(dsn string) string {
+	// Remove channel_binding parameter if present as lib/pq does not support it
+	dsn = strings.ReplaceAll(dsn, "&channel_binding=require", "")
+	dsn = strings.ReplaceAll(dsn, "channel_binding=require&", "")
+	dsn = strings.ReplaceAll(dsn, "?channel_binding=require", "")
+	return dsn
+}
+
 // InitDB initializes the global DB pool
 func InitDB(dataSourceName string) error {
+	dataSourceName = cleanPostgresDSN(dataSourceName)
 	var err error
 	DB, err = sql.Open("postgres", dataSourceName)
 	if err != nil {
