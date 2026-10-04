@@ -43,5 +43,5 @@ jobs:
             chmod +x bangla-saas-backend.new
             # 2. Atomic swap
             mv bangla-saas-backend.new bangla-saas-backend
-            # 3. Kill ONLY the Go app, not the SSH session
-            pkill -f "[b]angla-saas-backend" || true
+            # 3. Use -x to exactly match the binary name, sparing the SSH shell
+            pkill -x bangla-saas-backend || true
