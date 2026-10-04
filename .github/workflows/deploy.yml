@@ -41,7 +41,7 @@ jobs:
             cd /home/shudipta/bangla-saas
             # 1. Make it executable
             chmod +x bangla-saas-backend.new
-            # 2. Atomic swap (overwrites the file without triggering the lock error)
+            # 2. Atomic swap
             mv bangla-saas-backend.new bangla-saas-backend
-            # 3. Kill the current running process so Alwaysdata restarts it instantly
-            pkill -f bangla-saas-backend || true
+            # 3. Kill ONLY the Go app, not the SSH session
+            pkill -f "[b]angla-saas-backend" || true
