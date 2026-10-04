@@ -1,0 +1,47 @@
+name: Deploy to Alwaysdata
+
+on:
+  push:
+    branches:
+      - main # Triggers when you push to the main branch
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22" # Change to match your Go version
+
+      - name: Build Go binary
+        # Compiles with a temporary name to avoid the "Failure" lock error
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bangla-saas-backend.new ./cmd/server
+
+      - name: Upload to Server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "bangla-saas-backend.new"
+          target: "/home/shudipta/bangla-saas/"
+
+      - name: Swap and Restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/shudipta/bangla-saas
+            # 1. Make it executable
+            chmod +x bangla-saas-backend.new
+            # 2. Atomic swap (overwrites the file without triggering the lock error)
+            mv bangla-saas-backend.new bangla-saas-backend
+            # 3. Kill the current running process so Alwaysdata restarts it instantly
+            pkill -f bangla-saas-backend || true
