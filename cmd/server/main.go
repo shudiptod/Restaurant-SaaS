@@ -2,17 +2,20 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log"
+	"net"
+	"net/http"
 	"os"
-	"path/filepath"
 	"restaurant-saas/internal/auth"
 	"restaurant-saas/internal/db"
 	"restaurant-saas/internal/handlers"
+	"restaurant-saas"
 	"strings"
 	"time"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -70,22 +73,16 @@ func main() {
 	}
 	log.Println("Schema migrations completed successfully.")
 
-	// Run seed fixtures on dev setup if table is empty
-	var userCount int
-	err = db.DB.QueryRow("SELECT count(*) FROM users").Scan(&userCount)
-	if err == nil && userCount == 0 {
-		log.Println("Database is empty, loading reference seed fixtures...")
-		seedContent, err := os.ReadFile("docs/seed.sql")
-		if err == nil {
-			_, err = db.DB.Exec(string(seedContent))
-			if err != nil {
-				log.Printf("Warning: failed to execute seed.sql: %v", err)
-			} else {
-				log.Println("Database successfully seeded.")
-			}
-		} else {
-			log.Printf("Warning: failed to read seed.sql: %v", err)
-		}
+	// Seed reference plans and features on every start; statements are idempotent.
+	seedContent, err := os.ReadFile("docs/seed.sql")
+	if err != nil {
+		log.Fatalf("Failed to read reference seed: %v", err)
+	}
+	if _, err := db.DB.Exec(string(seedContent)); err != nil {
+		log.Fatalf("Failed to seed reference data: %v", err)
+	}
+	if err := db.BootstrapPlatformOwner(context.Background()); err != nil {
+		log.Fatalf("Platform owner bootstrap failed: %v", err)
 	}
 
 	// Initialize sessions secret
@@ -95,7 +92,7 @@ func main() {
 	r := gin.Default()
 
 	// Configure template functions helper mapping
-	r.SetFuncMap(template.FuncMap{
+	funcMap := template.FuncMap{
 		"formatPrice": func(poisha int) string {
 			return fmt.Sprintf("%.2f", float64(poisha)/100.0)
 		},
@@ -138,22 +135,22 @@ func main() {
 			}
 			return s == *ptr
 		},
-	})
-
-	// Load HTML templates
-	templates, err := filepath.Glob("templates/*.tmpl")
-	if err != nil {
-		log.Fatalf("Glob templates failed: %v", err)
 	}
-	components, err := filepath.Glob("templates/components/*.tmpl")
-	if err != nil {
-		log.Fatalf("Glob components failed: %v", err)
-	}
-	templates = append(templates, components...)
-	r.LoadHTMLFiles(templates...)
+	r.SetFuncMap(funcMap)
 
-	// Serve static files
-	r.Static("/static", "./static")
+	// Parse embedded templates so the executable does not depend on template files on disk.
+	parsedTemplates, err := template.New("").Funcs(funcMap).ParseFS(webassets.Files, "templates/*.tmpl", "templates/components/*.tmpl")
+	if err != nil {
+		log.Fatalf("Parse embedded templates failed: %v", err)
+	}
+	r.SetHTMLTemplate(parsedTemplates)
+
+	// Serve embedded static files so CSS is available without a deployed static directory.
+	staticFiles, err := fs.Sub(webassets.Files, "static")
+	if err != nil {
+		log.Fatalf("Open embedded static files failed: %v", err)
+	}
+	r.StaticFS("/static", http.FS(staticFiles))
 
 	// 5. Routing Definitions
 	r.GET("/login", handlers.ShowLogin)
@@ -165,6 +162,9 @@ func main() {
 	authGroup.Use(handlers.RequireAuth())
 	{
 		authGroup.GET("/", handlers.ShowDashboard)
+		authGroup.GET("/platform", handlers.ShowPlatformDashboard)
+		authGroup.POST("/platform/accounts", handlers.CreateCustomerAccount)
+		authGroup.POST("/platform/accounts/:id/status", handlers.UpdateAccountStatus)
 		authGroup.POST("/switch-restaurant", handlers.SwitchRestaurant)
 
 		// Tables
@@ -207,12 +207,21 @@ func main() {
 	}
 
 	// 6. Listen and Serve
+	ip := os.Getenv("IP")
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Server starting on http://0.0.0.0:%s", port)
-	if err := r.Run("0.0.0.0:" + port); err != nil {
+
+	// net.JoinHostPort correctly formats the address (e.g., "[fd00::7:b876]:8100")
+	// If 'ip' is empty during local testing, it defaults to ":8080", which binds to all interfaces.
+	address := net.JoinHostPort(ip, port)
+
+	log.Printf("Server starting on %s", address)
+
+	// Pass the correctly formatted address to Gin
+	if err := r.Run(address); err != nil {
 		log.Fatalf("Server startup failed: %v", err)
 	}
 }

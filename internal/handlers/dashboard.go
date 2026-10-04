@@ -31,6 +31,10 @@ func ShowDashboard(c *gin.Context) {
 		return
 	}
 	user := val.(CurrentUser)
+	if user.IsPlatformAdmin && user.PlatformRole == "superadmin" {
+		c.Redirect(http.StatusSeeOther, "/platform")
+		return
+	}
 	activeRestID := GetActiveRestaurantID(c, user)
 
 	var stats DashboardStats

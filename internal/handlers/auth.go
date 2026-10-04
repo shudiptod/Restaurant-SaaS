@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"restaurant-saas/internal/auth"
 	"restaurant-saas/internal/db"
@@ -13,12 +14,12 @@ import (
 
 // CurrentUser represents the logged-in user and their restaurant contexts
 type CurrentUser struct {
-	ID          string
-	Email       string
-	FullName    string
+	ID              string
+	Email           string
+	FullName        string
 	IsPlatformAdmin bool
-	PlatformRole string
-	Restaurants []models.RestaurantUserContext
+	PlatformRole    string
+	Restaurants     []models.RestaurantUserContext
 }
 
 // RequireAuth middleware extracts session cookie, loads user identity,
@@ -64,21 +65,41 @@ func RequireAuth() gin.HandlerFunc {
 			user.PlatformRole = platRole
 		}
 
-		// Fetch active restaurant memberships
-		rows, err := db.DB.QueryContext(ctx, `
-			SELECT ru.restaurant_id, r.name, ru.role 
-			FROM restaurant_users ru
-			JOIN restaurants r ON r.id = ru.restaurant_id
-			WHERE ru.user_id = $1 AND ru.status = 'active'
-		`, userID)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var rc models.RestaurantUserContext
-				if err := rows.Scan(&rc.RestaurantID, &rc.RestaurantName, &rc.Role); err == nil {
+		// Fetch memberships in a transaction so the RLS user context is set.
+		if !user.IsPlatformAdmin {
+			err = db.WithTx(ctx, func(tx *sql.Tx) error {
+				rows, err := tx.QueryContext(ctx, `
+					SELECT ru.restaurant_id, r.name, ru.role
+					FROM restaurant_users ru
+					JOIN restaurants r ON r.id = ru.restaurant_id
+					JOIN accounts a ON a.id = r.account_id AND a.status = 'active'
+					WHERE ru.user_id = $1 AND ru.status = 'active'
+				`, userID)
+				if err != nil {
+					return err
+				}
+				defer rows.Close()
+				for rows.Next() {
+					var rc models.RestaurantUserContext
+					if err := rows.Scan(&rc.RestaurantID, &rc.RestaurantName, &rc.Role); err != nil {
+						return err
+					}
 					user.Restaurants = append(user.Restaurants, rc)
 				}
+				return rows.Err()
+			})
+			if err != nil {
+				auth.ClearSessionCookie(c.Writer)
+				c.Redirect(http.StatusSeeOther, "/login")
+				c.Abort()
+				return
 			}
+		}
+		if len(user.Restaurants) == 0 && !user.IsPlatformAdmin {
+			auth.ClearSessionCookie(c.Writer)
+			c.Redirect(http.StatusSeeOther, "/login")
+			c.Abort()
+			return
 		}
 
 		c.Set("user", user)
@@ -99,7 +120,11 @@ func HandleLogin(c *gin.Context) {
 	password := c.PostForm("password")
 
 	var userID, passwordHash string
-	err := db.DB.QueryRowContext(c.Request.Context(), "SELECT id, password_hash FROM users WHERE email = $1", email).
+	username := c.PostForm("username")
+	if username == "" {
+		username = email
+	}
+	err := db.DB.QueryRowContext(c.Request.Context(), "SELECT id, password_hash FROM users WHERE username = $1", username).
 		Scan(&userID, &passwordHash)
 	if err != nil {
 		c.HTML(http.StatusUnauthorized, "login.tmpl", gin.H{
@@ -108,25 +133,12 @@ func HandleLogin(c *gin.Context) {
 		return
 	}
 
-	// For standard dev fixtures where hash is literally 'REPLACE_WITH_REAL_HASH',
-	// let's allow a fallback or compare against 'password' (or hashed password).
-	// In a real database, it will be a proper bcrypt hash.
-	if passwordHash == "REPLACE_WITH_REAL_HASH" {
-		// Set a temporary dev behavior: password "password" is accepted for unhashed dev entries
-		if password != "password" {
-			c.HTML(http.StatusUnauthorized, "login.tmpl", gin.H{
-				"Error": "Invalid email or password",
-			})
-			return
-		}
-	} else {
-		err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
-		if err != nil {
-			c.HTML(http.StatusUnauthorized, "login.tmpl", gin.H{
-				"Error": "Invalid email or password",
-			})
-			return
-		}
+	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
+	if err != nil {
+		c.HTML(http.StatusUnauthorized, "login.tmpl", gin.H{
+			"Error": "Invalid email or password",
+		})
+		return
 	}
 
 	auth.SetSessionCookie(c.Writer, userID)

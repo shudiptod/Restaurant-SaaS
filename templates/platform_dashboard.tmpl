@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Platform Dashboard - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <style>
+    .account-table-wrap { overflow-x: auto; }
+    .account-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    .account-table th, .account-table td { padding: 12px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .account-table th { color: var(--ink-dim); font-size: 12px; font-weight: 600; }
+    .account-table td { font-size: 13px; }
+    .account-table form { margin: 0; }
+    .platform-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .status-active { color: var(--status-good); font-weight: 600; }
+    .status-suspended { color: var(--status-danger); font-weight: 600; }
+    @media (max-width: 680px) {
+      .platform-form-grid { grid-template-columns: 1fr; }
+      .main-view { padding: 20px 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    <main class="main-view">
+      <div class="page-header">
+        <div class="page-title">
+          <h2>Platform Dashboard</h2>
+          <p>Customer accounts and restaurant owners</p>
+        </div>
+      </div>
+
+      {{ if .Error }}<div class="login-error" role="alert">{{ .Error }}</div>{{ end }}
+      {{ if .Notice }}<div class="card" role="status" style="padding: 12px 16px; border-color: var(--status-good);">{{ .Notice }}</div>{{ end }}
+
+      <section class="card">
+        <h3 style="margin-bottom: 18px;">Create customer account</h3>
+        <form action="/platform/accounts" method="POST">
+          <div class="platform-form-grid">
+            <div class="form-group">
+              <label class="form-label" for="owner_name">Owner full name</label>
+              <input class="form-control" id="owner_name" name="owner_name" required autocomplete="name">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="username">Owner username</label>
+              <input class="form-control" id="username" name="username" required autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="email">Owner email</label>
+              <input class="form-control" type="email" id="email" name="email" required autocomplete="email">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="password">Initial password</label>
+              <input class="form-control" type="password" id="password" name="password" minlength="12" required autocomplete="new-password">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="account_name">Customer account name</label>
+              <input class="form-control" id="account_name" name="account_name" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="restaurant_name">First restaurant name</label>
+              <input class="form-control" id="restaurant_name" name="restaurant_name" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="plan_code">Trial plan</label>
+              <select class="form-control" id="plan_code" name="plan_code" required>
+                {{ range .Plans }}<option value="{{ .Code }}">{{ .Name }}</option>{{ end }}
+              </select>
+            </div>
+          </div>
+          <button class="btn btn-primary" type="submit">Create customer</button>
+        </form>
+      </section>
+
+      <section>
+        <div class="page-header" style="margin-bottom: 14px;">
+          <div class="page-title"><h3>Customer accounts</h3><p>{{ len .Accounts }} accounts</p></div>
+        </div>
+        <div class="card account-table-wrap" style="padding: 8px 18px;">
+          <table class="account-table">
+            <thead><tr><th>Account</th><th>Owner</th><th>Restaurants</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+              {{ range .Accounts }}
+              <tr>
+                <td><strong>{{ .Name }}</strong></td>
+                <td>{{ .OwnerName }}<br><span style="color: var(--ink-dim);">@{{ .OwnerUsername }} · {{ .OwnerEmail }}</span></td>
+                <td>{{ .RestaurantCount }}<br><span style="color: var(--ink-dim);">{{ .Restaurants }}</span></td>
+                <td class="status-{{ .Status }}">{{ .Status }}</td>
+                <td>
+                  <form action="/platform/accounts/{{ .ID }}/status" method="POST">
+                    {{ if eq .Status "active" }}
+                    <input type="hidden" name="status" value="suspended">
+                    <button class="btn btn-danger" type="submit">Disable</button>
+                    {{ else }}
+                    <input type="hidden" name="status" value="active">
+                    <button class="btn btn-secondary" type="submit">Enable</button>
+                    {{ end }}
+                  </form>
+                </td>
+              </tr>
+              {{ else }}<tr><td colspan="5">No customer accounts yet.</td></tr>{{ end }}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

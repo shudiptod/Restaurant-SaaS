@@ -88,7 +88,7 @@ func SetSessionCookie(w http.ResponseWriter, userID string) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false, // Set to true in production if TLS is terminated at the app (Caddy terminates TLS, Go app runs on HTTP locally)
+		Secure:   os.Getenv("COOKIE_SECURE") == "true",
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400, // 24 hours
 	})
