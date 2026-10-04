@@ -65,19 +65,20 @@ func main() {
 	defer db.DB.Close()
 
 	// 3. Run database schema migrations
-	log.Println("Running schema migrations...")
-	// The migrations are stored inside docs/ directory
-	err = db.RunMigrations("docs")
-	if err != nil {
-		log.Fatalf("Migration runner failed: %v", err)
-	}
-	log.Println("Schema migrations completed successfully.")
+    log.Println("Running schema migrations...")
+    
+    // Pass the embedded Files and the directory name
+    err = db.RunMigrations(webassets.Files, "docs")
+    if err != nil {
+        log.Fatalf("Migration runner failed: %v", err)
+    }
+    log.Println("Schema migrations completed successfully.")
 
-	// Seed reference plans and features on every start; statements are idempotent.
-	seedContent, err := os.ReadFile("docs/seed.sql")
-	if err != nil {
-		log.Fatalf("Failed to read reference seed: %v", err)
-	}
+    // Read the seed file from memory too!
+    seedContent, err := webassets.Files.ReadFile("docs/seed.sql")
+    if err != nil {
+        log.Fatalf("Failed to read reference seed: %v", err)
+    }
 	if _, err := db.DB.Exec(string(seedContent)); err != nil {
 		log.Fatalf("Failed to seed reference data: %v", err)
 	}
