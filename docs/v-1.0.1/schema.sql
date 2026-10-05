@@ -28,6 +28,7 @@ CREATE TABLE platform_admins (
   role        platform_role NOT NULL DEFAULT 'superadmin',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX platform_admins_user_unique ON platform_admins (user_id);
 
 -- Feature catalog: every togglable/limitable capability a plan can grant.
 -- Numeric limits (max_restaurants, max_users_per_account) and boolean flags
@@ -198,6 +199,18 @@ CREATE TABLE tables (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE restaurant_staff (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  restaurant_id  UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+  name           TEXT NOT NULL,
+  is_waiter      BOOLEAN NOT NULL DEFAULT false,
+  is_cashier     BOOLEAN NOT NULL DEFAULT false,
+  custom_title   TEXT,
+  is_active      BOOLEAN NOT NULL DEFAULT true,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (id, restaurant_id)
+);
+
 CREATE TABLE menu_categories (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   restaurant_id  UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
@@ -226,12 +239,20 @@ CREATE TABLE orders (
   table_id          UUID REFERENCES tables(id),
   status            order_status NOT NULL DEFAULT 'open',
   opened_by         UUID REFERENCES users(id),
+  staff_id          UUID REFERENCES restaurant_staff(id) ON DELETE SET NULL,
   opened_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   closed_at         TIMESTAMPTZ,
   subtotal          INTEGER NOT NULL DEFAULT 0,
   tax_amount        INTEGER NOT NULL DEFAULT 0,
   discount_amount   INTEGER NOT NULL DEFAULT 0,
+  discount_type     TEXT CHECK (discount_type IN ('amount','percent')),
+  discount_value    INTEGER CHECK (discount_value >= 0),
   total_amount      INTEGER NOT NULL DEFAULT 0
+);
+ALTER TABLE orders ADD CONSTRAINT orders_discount_value_valid CHECK (
+  (discount_type IS NULL AND discount_value IS NULL) OR
+  (discount_type = 'amount' AND discount_value IS NOT NULL) OR
+  (discount_type = 'percent' AND discount_value BETWEEN 0 AND 10000)
 );
 
 CREATE TABLE order_items (
@@ -240,12 +261,19 @@ CREATE TABLE order_items (
   menu_item_id   UUID NOT NULL REFERENCES menu_items(id),
   quantity       INTEGER NOT NULL DEFAULT 1,
   unit_price     INTEGER NOT NULL,   -- the price actually charged for this line (may be overridden — see below)
+  discount_type  TEXT CHECK (discount_type IN ('amount','percent')),
+  discount_value INTEGER CHECK (discount_value >= 0),
+  discount_amount INTEGER NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),
   notes          TEXT
 );
+ALTER TABLE order_items ADD CONSTRAINT order_items_discount_value_valid CHECK (
+  (discount_type IS NULL AND discount_value IS NULL) OR
+  (discount_type = 'amount' AND discount_value IS NOT NULL) OR
+  (discount_type = 'percent' AND discount_value BETWEEN 0 AND 10000)
+);
 
--- Price-override audit trail. unit_price above always holds the CURRENT effective price;
--- every change to it — a manual discount, a comped item — is recorded here immutably,
--- separate from unit_price itself, so history survives even if overridden more than once.
+-- Append-only audit for line discounts and manual price adjustments. The order line retains
+-- its snapshotted base unit price; discount fields determine the effective line amount.
 CREATE TABLE order_item_price_adjustments (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_item_id   UUID NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
@@ -253,6 +281,20 @@ CREATE TABLE order_item_price_adjustments (
   original_price  INTEGER NOT NULL,   -- unit_price immediately before this change
   adjusted_price  INTEGER NOT NULL,   -- unit_price immediately after this change
   reason          TEXT NOT NULL,       -- required — every override must be justified (e.g. "regular customer discount")
+  adjusted_by     UUID NOT NULL REFERENCES users(id),
+  discount_type   TEXT CHECK (discount_type IN ('amount','percent')),
+  discount_value  INTEGER CHECK (discount_value >= 0),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE order_discount_adjustments (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id        UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  restaurant_id   UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+  discount_type   TEXT NOT NULL CHECK (discount_type IN ('amount','percent','cleared')),
+  discount_value  INTEGER NOT NULL CHECK (discount_value >= 0),
+  discount_amount INTEGER NOT NULL CHECK (discount_amount >= 0),
+  reason          TEXT NOT NULL,
   adjusted_by     UUID NOT NULL REFERENCES users(id),
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -297,6 +339,8 @@ ALTER TABLE restaurant_status_log         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE account_subscriptions         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments                      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE account_feature_overrides     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE restaurant_staff             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_discount_adjustments   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tables                        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE menu_categories               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE menu_items                    ENABLE ROW LEVEL SECURITY;
@@ -341,6 +385,24 @@ CREATE POLICY tenant_isolation ON order_item_price_adjustments
     SELECT restaurant_id FROM restaurant_users
     WHERE user_id = current_setting('app.current_user_id')::uuid AND status = 'active'
   ));
+CREATE POLICY tenant_isolation ON restaurant_staff
+  USING (restaurant_id IN (
+    SELECT restaurant_id FROM restaurant_users
+    WHERE user_id = current_setting('app.current_user_id')::uuid AND status = 'active'
+  ))
+  WITH CHECK (restaurant_id IN (
+    SELECT restaurant_id FROM restaurant_users
+    WHERE user_id = current_setting('app.current_user_id')::uuid AND status = 'active'
+  ));
+CREATE POLICY tenant_isolation ON order_discount_adjustments
+  USING (restaurant_id IN (
+    SELECT restaurant_id FROM restaurant_users
+    WHERE user_id = current_setting('app.current_user_id')::uuid AND status = 'active'
+  ))
+  WITH CHECK (restaurant_id IN (
+    SELECT restaurant_id FROM restaurant_users
+    WHERE user_id = current_setting('app.current_user_id')::uuid AND status = 'active'
+  ));
 CREATE POLICY tenant_isolation ON invoices
   USING (restaurant_id IN (
     SELECT restaurant_id FROM restaurant_users
@@ -366,14 +428,39 @@ CREATE POLICY owner_only ON payments
   USING (account_id IN (SELECT id FROM accounts WHERE owner_user_id = current_setting('app.current_user_id')::uuid));
 CREATE POLICY owner_only ON account_feature_overrides
   USING (account_id IN (SELECT id FROM accounts WHERE owner_user_id = current_setting('app.current_user_id')::uuid));
+CREATE POLICY account_owner_manage_memberships ON restaurant_users
+  FOR ALL
+  USING (EXISTS (
+    SELECT 1 FROM restaurants r JOIN accounts a ON a.id = r.account_id
+    WHERE r.id = restaurant_users.restaurant_id AND a.owner_user_id = current_setting('app.current_user_id', true)::uuid
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM restaurants r JOIN accounts a ON a.id = r.account_id
+    WHERE r.id = restaurant_users.restaurant_id AND a.owner_user_id = current_setting('app.current_user_id', true)::uuid
+  ));
+CREATE POLICY platform_admin_all ON account_feature_overrides
+  FOR ALL
+  USING (EXISTS (SELECT 1 FROM platform_admins WHERE user_id = current_setting('app.current_user_id', true)::uuid AND role = 'superadmin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM platform_admins WHERE user_id = current_setting('app.current_user_id', true)::uuid AND role = 'superadmin'));
+CREATE POLICY platform_admin_read ON account_feature_overrides
+  FOR SELECT
+  USING (EXISTS (SELECT 1 FROM platform_admins WHERE user_id = current_setting('app.current_user_id', true)::uuid AND role IN ('superadmin','support')));
+CREATE POLICY platform_admin_read ON account_subscriptions
+  FOR SELECT
+  USING (EXISTS (SELECT 1 FROM platform_admins WHERE user_id = current_setting('app.current_user_id', true)::uuid AND role IN ('superadmin','support')));
 
 -- Helpful indexes
 CREATE INDEX idx_restaurant_users_user_active ON restaurant_users (user_id) WHERE status = 'active';
 CREATE INDEX idx_restaurants_account          ON restaurants (account_id);
 CREATE INDEX idx_orders_restaurant_status     ON orders (restaurant_id, status);
+CREATE UNIQUE INDEX one_open_order_per_table ON orders (restaurant_id, table_id)
+  WHERE status = 'open' AND table_id IS NOT NULL;
 CREATE INDEX idx_menu_items_restaurant        ON menu_items (restaurant_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_payments_account_status      ON payments (account_id, status);
 CREATE INDEX idx_price_adj_order_item         ON order_item_price_adjustments (order_item_id);
+CREATE INDEX idx_restaurant_staff_active ON restaurant_staff (restaurant_id, name) WHERE is_active = true;
+CREATE INDEX idx_orders_open_table ON orders (restaurant_id, table_id, opened_at DESC) WHERE status = 'open';
+CREATE INDEX idx_order_discount_adjustments_order ON order_discount_adjustments (order_id, created_at DESC);
 
 -- ============================================================
 -- SEED: suggested feature keys (see documentation.md for full reasoning)

@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	sessionSecretKey = []byte("default-dev-secret-key-change-me-in-production")
-	CookieName       = "rms_session"
+	sessionSecretKey   = []byte("default-dev-secret-key-change-me-in-production")
+	CookieName         = "rms_session"
+	PlatformCookieName = "rms_platform_session"
 )
 
 func InitSession() {
@@ -81,26 +82,43 @@ func VerifySessionToken(tokenStr string) (string, error) {
 
 // SetSessionCookie sets the session cookie in the HTTP response
 func SetSessionCookie(w http.ResponseWriter, userID string) {
+	setSessionCookie(w, userID, CookieName, "/", http.SameSiteLaxMode)
+}
+
+func SetPlatformSessionCookie(w http.ResponseWriter, userID string) {
+	setSessionCookie(w, userID, PlatformCookieName, "/platform", http.SameSiteStrictMode)
+}
+
+func setSessionCookie(w http.ResponseWriter, userID, name, path string, sameSite http.SameSite) {
 	// Standard 24h sessions
 	token := GenerateSessionToken(userID, 24*time.Hour)
 	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
+		Name:     name,
 		Value:    token,
-		Path:     "/",
+		Path:     path,
 		HttpOnly: true,
 		Secure:   os.Getenv("COOKIE_SECURE") == "true",
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 		MaxAge:   86400, // 24 hours
 	})
 }
 
 // ClearSessionCookie clears the session cookie in the HTTP response
 func ClearSessionCookie(w http.ResponseWriter) {
+	clearSessionCookie(w, CookieName, "/")
+}
+
+func ClearPlatformSessionCookie(w http.ResponseWriter) {
+	clearSessionCookie(w, PlatformCookieName, "/platform")
+}
+
+func clearSessionCookie(w http.ResponseWriter, name, path string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
+		Name:     name,
 		Value:    "",
-		Path:     "/",
+		Path:     path,
 		HttpOnly: true,
+		Secure:   os.Getenv("COOKIE_SECURE") == "true",
 		MaxAge:   -1,
 	})
 }

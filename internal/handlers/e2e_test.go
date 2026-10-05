@@ -39,6 +39,9 @@ func setupTestRouter(t *testing.T) *gin.Engine {
 		"multiply": func(qty int, price int) int {
 			return qty * price
 		},
+		"subtract": func(value int, deduction int) int {
+			return value - deduction
+		},
 		"formatTime": func(t time.Time) string {
 			return t.Format("02 Jan 2006, 03:04 PM")
 		},
@@ -91,9 +94,17 @@ func setupTestRouter(t *testing.T) *gin.Engine {
 	authGroup.Use(RequireAuth())
 	{
 		authGroup.GET("/", ShowDashboard)
+		authGroup.GET("/restaurants/new", ShowNewRestaurant)
+		authGroup.POST("/restaurants", CreateRestaurant)
+		authGroup.GET("/team", ShowTeam)
+		authGroup.POST("/team/create", CreateRestaurantLogin)
+		authGroup.POST("/team/add-existing", AddExistingRestaurantLogin)
 		authGroup.GET("/tables", ShowTables)
 		authGroup.POST("/tables/:id/status", UpdateTableStatus)
 		authGroup.POST("/tables/add", AddTable)
+		authGroup.GET("/staff", ShowStaff)
+		authGroup.POST("/staff/add", AddRestaurantStaff)
+		authGroup.POST("/staff/:id/status", UpdateRestaurantStaffStatus)
 
 		authGroup.GET("/orders", ShowOrdersLists)
 		authGroup.POST("/orders/create", CreateOrder)
@@ -101,6 +112,8 @@ func setupTestRouter(t *testing.T) *gin.Engine {
 		authGroup.POST("/orders/:id/items/add", AddOrderItem)
 		authGroup.POST("/orders/:id/items/:item_id/qty", UpdateItemQty)
 		authGroup.POST("/orders/:id/items/:item_id/override", OverrideItemPrice)
+		authGroup.POST("/orders/:id/staff", SetOrderStaff)
+		authGroup.POST("/orders/:id/discount", SetOrderDiscount)
 		authGroup.POST("/orders/:id/close", CloseOrder)
 
 		authGroup.GET("/inventory", ShowInventory)
@@ -201,6 +214,123 @@ func TestTableStatusInteractivity(t *testing.T) {
 	}
 	if !strings.Contains(freeResp, "Status: available") {
 		t.Errorf("Expected 'Status: available' in rendered HTML, got: %s", freeResp)
+	}
+}
+
+func TestCreateOrderResumesOpenTableOrder(t *testing.T) {
+	r := setupTestRouter(t)
+	unique := fmt.Sprintf("resume-%d", time.Now().UnixNano())
+	var userID, accountID, restaurantID, tableID, menuItemID string
+	if err := db.DB.QueryRow(`
+		INSERT INTO users (email, password_hash, full_name)
+		VALUES ($1, 'test-hash', 'Resume Test') RETURNING id
+	`, unique+"@example.test").Scan(&userID); err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+	if err := db.DB.QueryRow(`
+		INSERT INTO accounts (name, owner_user_id) VALUES ($1, $2) RETURNING id
+	`, unique, userID).Scan(&accountID); err != nil {
+		t.Fatalf("create test account: %v", err)
+	}
+	if err := db.DB.QueryRow(`
+		INSERT INTO restaurants (account_id, name, slug) VALUES ($1, $2, $3) RETURNING id
+	`, accountID, unique, unique).Scan(&restaurantID); err != nil {
+		t.Fatalf("create test restaurant: %v", err)
+	}
+	if _, err := db.DB.Exec(`
+		INSERT INTO restaurant_users (restaurant_id, user_id, role) VALUES ($1, $2, 'owner')
+	`, restaurantID, userID); err != nil {
+		t.Fatalf("create test membership: %v", err)
+	}
+	if err := db.DB.QueryRow(`
+		INSERT INTO tables (restaurant_id, name, capacity, status)
+		VALUES ($1, $2, 4, 'occupied') RETURNING id
+	`, restaurantID, unique).Scan(&tableID); err != nil {
+		t.Fatalf("create occupied test table: %v", err)
+	}
+	if err := db.DB.QueryRow(`
+		INSERT INTO menu_items (restaurant_id, name, price) VALUES ($1, $2, 500) RETURNING id
+	`, restaurantID, unique+" item").Scan(&menuItemID); err != nil {
+		t.Fatalf("create test menu item: %v", err)
+	}
+	defer func() {
+		_, _ = db.DB.Exec("DELETE FROM orders WHERE table_id = $1", tableID)
+		_, _ = db.DB.Exec("DELETE FROM menu_items WHERE id = $1", menuItemID)
+		_, _ = db.DB.Exec("DELETE FROM accounts WHERE id = $1", accountID)
+		_, _ = db.DB.Exec("DELETE FROM users WHERE id = $1", userID)
+	}()
+	loginResponse := httptest.NewRecorder()
+	auth.SetSessionCookie(loginResponse, userID)
+	var cookie *http.Cookie
+	for _, candidate := range loginResponse.Result().Cookies() {
+		if candidate.Name == auth.CookieName {
+			cookie = candidate
+		}
+	}
+	if cookie == nil {
+		t.Fatal("test session did not issue an auth cookie")
+	}
+
+	postOrder := func() *httptest.ResponseRecorder {
+		form := url.Values{"table_id": {tableID}}
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/orders/create", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookie)
+		req.AddCookie(&http.Cookie{Name: "rms_active_restaurant", Value: restaurantID})
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	first := postOrder()
+	if first.Code != http.StatusSeeOther {
+		t.Fatalf("expected first order redirect, got %d: %s", first.Code, first.Body.String())
+	}
+	orderID := strings.TrimPrefix(first.Header().Get("Location"), "/orders/")
+	if _, err := db.DB.Exec(`
+		INSERT INTO order_items (order_id, menu_item_id, quantity, unit_price) VALUES ($1, $2, 1, 500)
+	`, orderID, menuItemID); err != nil {
+		t.Fatalf("add existing line to open order: %v", err)
+	}
+	second := postOrder()
+	if second.Code != http.StatusSeeOther {
+		t.Fatalf("expected resumed order redirect, got %d: %s", second.Code, second.Body.String())
+	}
+	if first.Header().Get("Location") != second.Header().Get("Location") {
+		t.Fatalf("expected same order to resume, got %q then %q", first.Header().Get("Location"), second.Header().Get("Location"))
+	}
+
+	var openCount int
+	if err := db.DB.QueryRow("SELECT count(*) FROM orders WHERE table_id = $1 AND status = 'open'", tableID).Scan(&openCount); err != nil {
+		t.Fatalf("count table orders: %v", err)
+	}
+	if openCount != 1 {
+		t.Fatalf("expected one open order for table, got %d", openCount)
+	}
+	var itemCount int
+	if err := db.DB.QueryRow("SELECT count(*) FROM order_items WHERE order_id = $1", orderID).Scan(&itemCount); err != nil {
+		t.Fatalf("count persisted order items: %v", err)
+	}
+	if itemCount != 1 {
+		t.Fatalf("expected the existing order line to persist, got %d lines", itemCount)
+	}
+
+	ordersPage := httptest.NewRecorder()
+	ordersRequest, _ := http.NewRequest("GET", "/orders", nil)
+	ordersRequest.AddCookie(cookie)
+	ordersRequest.AddCookie(&http.Cookie{Name: "rms_active_restaurant", Value: restaurantID})
+	r.ServeHTTP(ordersPage, ordersRequest)
+	if ordersPage.Code != http.StatusOK || !strings.Contains(ordersPage.Body.String(), unique+" (4 pax, occupied)") {
+		t.Fatalf("occupied table was not available in POS order selection: %d", ordersPage.Code)
+	}
+
+	tablesPage := httptest.NewRecorder()
+	tablesRequest, _ := http.NewRequest("GET", "/tables", nil)
+	tablesRequest.AddCookie(cookie)
+	tablesRequest.AddCookie(&http.Cookie{Name: "rms_active_restaurant", Value: restaurantID})
+	r.ServeHTTP(tablesPage, tablesRequest)
+	if tablesPage.Code != http.StatusOK || !strings.Contains(tablesPage.Body.String(), `action="/orders/create"`) || !strings.Contains(tablesPage.Body.String(), `data-elapsed-from=`) {
+		t.Fatalf("table page is missing direct POS action or active-order timer: %d", tablesPage.Code)
 	}
 }
 

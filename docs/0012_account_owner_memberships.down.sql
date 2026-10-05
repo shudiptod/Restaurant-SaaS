@@ -1,0 +1,1 @@
+DROP POLICY IF EXISTS account_owner_manage_memberships ON restaurant_users;

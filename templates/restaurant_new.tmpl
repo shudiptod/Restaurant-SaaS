@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Add Restaurant - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    <main class="main-view">
+      <div class="page-header"><div class="page-title"><h2>Add restaurant</h2><p>Create a location under this account</p></div></div>
+      {{ if .Error }}<div class="login-error" role="alert">{{ .Error }}</div>{{ end }}
+      <section class="card" style="max-width: 720px;">
+        <form action="/restaurants" method="POST">
+          <div class="form-group">
+            <label class="form-label" for="restaurant-name">Restaurant name</label>
+            <input class="form-control" id="restaurant-name" name="name" required maxlength="160">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="copy-from">Copy setup from an existing restaurant</label>
+            <select class="form-control" id="copy-from" name="copy_from">
+              <option value="">Start with an empty restaurant</option>
+              {{ range .Restaurants }}<option value="{{ .RestaurantID }}">{{ .RestaurantName }}</option>{{ end }}
+            </select>
+          </div>
+          <p style="font-size: 13px; color: var(--ink-dim); margin-bottom: 16px;">Copying includes menu categories and items, tables, inventory balances, and tax rates. Orders, invoices, stock history, and staff are not copied.</p>
+          <div style="display: flex; gap: 8px;">
+            <a href="/" class="btn btn-secondary">Cancel</a>
+            <button class="btn btn-primary" type="submit">Create restaurant</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

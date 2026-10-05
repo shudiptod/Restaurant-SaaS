@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Restaurant Users - RMS SaaS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Bengali:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <style>
+    .team-forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    @media (max-width: 760px) { .team-forms { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    {{ template "sidebar" . }}
+    <main class="main-view">
+      <div class="page-header"><div class="page-title"><h2>Restaurant users</h2><p>Manage login access for this restaurant</p></div></div>
+      {{ if .Error }}<div class="login-error" role="alert">{{ .Error }}</div>{{ end }}
+      {{ if .Notice }}<div class="card" role="status" style="padding: 12px 16px; border-color: var(--status-good);">{{ .Notice }}</div>{{ end }}
+      <div class="team-forms">
+        <section class="card">
+          <h3 style="margin-bottom: 16px;">Create login</h3>
+          <form action="/team/create" method="POST">
+            <div class="form-group"><label class="form-label" for="full-name">Full name</label><input class="form-control" id="full-name" name="full_name" required></div>
+            <div class="form-group"><label class="form-label" for="username">Username</label><input class="form-control" id="username" name="username" required autocomplete="off"></div>
+            <div class="form-group"><label class="form-label" for="email">Email</label><input class="form-control" id="email" name="email" type="email" required></div>
+            <div class="form-group"><label class="form-label" for="password">Initial password</label><input class="form-control" id="password" name="password" type="password" minlength="12" required autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label" for="new-role">Restaurant role</label><select class="form-control" id="new-role" name="role"><option value="admin">Admin</option><option value="owner">Owner</option></select></div>
+            <button class="btn btn-primary" type="submit">Create and assign</button>
+          </form>
+        </section>
+        <section class="card">
+          <h3 style="margin-bottom: 16px;">Assign existing login</h3>
+          <form action="/team/add-existing" method="POST">
+            <div class="form-group"><label class="form-label" for="identifier">Username or email</label><input class="form-control" id="identifier" name="identifier" required></div>
+            <div class="form-group"><label class="form-label" for="existing-role">Restaurant role</label><select class="form-control" id="existing-role" name="role"><option value="admin">Admin</option><option value="owner">Owner</option></select></div>
+            <button class="btn btn-secondary" type="submit">Assign to this restaurant</button>
+          </form>
+        </section>
+      </div>
+      <section style="margin-top: 24px;">
+        <div class="page-header" style="margin-bottom: 14px;"><div class="page-title"><h3>Current access</h3><p>{{ len .Members }} members</p></div></div>
+        <div class="card" style="overflow-x: auto;">
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Login</th><th>Role</th><th>Status</th></tr></thead>
+            <tbody>
+              {{ range .Members }}<tr><td>{{ .FullName }}</td><td>@{{ .Username }} · {{ .Email }}</td><td>{{ .Role }}</td><td>{{ .Status }}</td></tr>
+              {{ else }}<tr><td colspan="4" style="text-align: center; color: var(--ink-dim); padding: 20px;">No login users assigned.</td></tr>{{ end }}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

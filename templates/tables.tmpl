@@ -68,13 +68,26 @@
           </form>
         </div>
       </div>
+      <script>
+        function updateTableTimers() {
+          document.querySelectorAll('[data-elapsed-from]').forEach((timer) => {
+            const seconds = Math.max(0, Math.floor(Date.now() / 1000) - Number(timer.dataset.elapsedFrom));
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const remainder = seconds % 60;
+            timer.textContent = [hours, minutes, remainder].map((value) => String(value).padStart(2, '0')).join(':');
+          });
+        }
+        updateTableTimers();
+        setInterval(updateTableTimers, 1000);
+      </script>
     </main>
   </div>
 </body>
 </html>
 
 {{ define "table-card" }}
-<div class="table-card" id="table-{{ .ID }}">
+<div class="table-card table-card-{{ .Status }}" id="table-{{ .ID }}">
   <div class="table-card-header">
     <span class="table-card-title">{{ .Name }}</span>
     <span class="table-status-dot {{ if eq .Status "available" }}status-dot-good{{ else if eq .Status "occupied" }}status-dot-warn{{ else if eq .Status "reserved" }}status-dot-pending{{ end }}"></span>
@@ -85,14 +98,23 @@
   <div style="font-size: 13px; font-weight: 500; text-transform: capitalize; margin-top: 4px;">
     Status: {{ .Status }}
   </div>
+  {{ if .OpenedAt }}
+  <div style="font-size: 13px; color: var(--ink);">Sitting time: <span class="mono-num" data-elapsed-from="{{ .OpenedAt.Unix }}">--:--:--</span></div>
+  {{ end }}
   
   <div class="table-card-actions" style="margin-top: auto; display: flex; gap: 4px; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--border);">
-    <button class="btn btn-secondary" style="min-height: 32px; height: 32px; min-width: 44px; padding: 4px 8px; font-size: 12px;"
+    <form action="/orders/create" method="POST" style="margin: 0; margin-right: auto;">
+      <input type="hidden" name="table_id" value="{{ .ID }}">
+      <button class="btn btn-primary" style="min-height: 32px; height: 32px; padding: 4px 10px; font-size: 12px;" type="submit">
+        Add item
+      </button>
+    </form>
+    {{ if not .OpenedAt }}<button class="btn btn-secondary" style="min-height: 32px; height: 32px; min-width: 44px; padding: 4px 8px; font-size: 12px;"
             hx-post="/tables/{{ .ID }}/status?status=available"
             hx-target="#table-{{ .ID }}"
             hx-swap="outerHTML">
       Free
-    </button>
+    </button>{{ end }}
     <button class="btn btn-secondary" style="min-height: 32px; height: 32px; min-width: 44px; padding: 4px 8px; font-size: 12px; border-color: var(--status-warn); color: var(--status-warn);"
             hx-post="/tables/{{ .ID }}/status?status=occupied"
             hx-target="#table-{{ .ID }}"

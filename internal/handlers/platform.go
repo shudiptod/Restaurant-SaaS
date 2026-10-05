@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -15,29 +16,82 @@ import (
 )
 
 type PlatformAccount struct {
-	ID              string
-	Name            string
-	Status          string
-	OwnerName       string
-	OwnerUsername   string
-	OwnerEmail      string
-	Restaurants     string
-	RestaurantCount int
+	ID                 string
+	Name               string
+	Status             string
+	OwnerName          string
+	OwnerUsername      string
+	OwnerEmail         string
+	Restaurants        string
+	RestaurantCount    int
+	SubscriptionID     string
+	PlanID             string
+	PlanName           string
+	SubscriptionStatus string
+	PeriodStart        string
+	PeriodEnd          string
 }
 
 type SubscriptionPlan struct {
-	Code string
-	Name string
+	ID              string
+	Code            string
+	Name            string
+	PriceAmount     int
+	BillingInterval string
+	IsActive        bool
+	Features        []PlanFeatureValue
 }
 
-func superadmin(c *gin.Context) (CurrentUser, bool) {
+type PlatformFeature struct {
+	ID          string
+	Key         string
+	Name        string
+	Description string
+	ValueType   string
+}
+
+type PlanFeatureValue struct {
+	ID        string
+	Key       string
+	Name      string
+	ValueType string
+	Value     string
+}
+
+type AccountFeatureOverride struct {
+	ID          string
+	AccountName string
+	FeatureName string
+	Value       string
+	Reason      string
+}
+
+type PlatformSupportUser struct {
+	Name     string
+	Username string
+	Email    string
+}
+
+func platformUser(c *gin.Context) (CurrentUser, bool) {
 	value, exists := c.Get("user")
 	if !exists {
-		c.Redirect(http.StatusSeeOther, "/login")
+		c.Redirect(http.StatusSeeOther, "/platform/login")
 		return CurrentUser{}, false
 	}
 	user := value.(CurrentUser)
-	if !user.IsPlatformAdmin || user.PlatformRole != "superadmin" {
+	if !user.IsPlatformAdmin {
+		c.AbortWithStatus(http.StatusForbidden)
+		return CurrentUser{}, false
+	}
+	return user, true
+}
+
+func superadmin(c *gin.Context) (CurrentUser, bool) {
+	user, ok := platformUser(c)
+	if !ok {
+		return CurrentUser{}, false
+	}
+	if user.PlatformRole != "superadmin" {
 		c.AbortWithStatus(http.StatusForbidden)
 		return CurrentUser{}, false
 	}
@@ -45,7 +99,7 @@ func superadmin(c *gin.Context) (CurrentUser, bool) {
 }
 
 func ShowPlatformDashboard(c *gin.Context) {
-	user, ok := superadmin(c)
+	user, ok := platformUser(c)
 	if !ok {
 		return
 	}
@@ -78,9 +132,49 @@ func ShowPlatformDashboard(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "Failed to read customer accounts")
 		return
 	}
+	err = db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
+		for index := range accounts {
+			var subscriptionID, planID, planName, status sql.NullString
+			var start, end sql.NullTime
+			err := tx.QueryRowContext(c.Request.Context(), `
+				SELECT s.id, p.id, p.name, s.status, s.current_period_start, s.current_period_end
+				FROM account_subscriptions s JOIN subscription_plans p ON p.id = s.plan_id
+				WHERE s.account_id = $1 ORDER BY s.created_at DESC LIMIT 1
+			`, accounts[index].ID).Scan(&subscriptionID, &planID, &planName, &status, &start, &end)
+			if err == sql.ErrNoRows {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if subscriptionID.Valid {
+				accounts[index].SubscriptionID = subscriptionID.String
+			}
+			if planID.Valid {
+				accounts[index].PlanID = planID.String
+			}
+			if planName.Valid {
+				accounts[index].PlanName = planName.String
+			}
+			if status.Valid {
+				accounts[index].SubscriptionStatus = status.String
+			}
+			if start.Valid {
+				accounts[index].PeriodStart = start.Time.Format("2006-01-02")
+			}
+			if end.Valid {
+				accounts[index].PeriodEnd = end.Time.Format("2006-01-02")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load account subscriptions")
+		return
+	}
 
 	plans := make([]SubscriptionPlan, 0)
-	planRows, err := db.DB.QueryContext(c.Request.Context(), "SELECT code, name FROM subscription_plans WHERE is_active = true ORDER BY sort_order, name")
+	planRows, err := db.DB.QueryContext(c.Request.Context(), "SELECT id, code, name, price_amount, billing_interval, is_active FROM subscription_plans ORDER BY sort_order, name")
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Failed to load subscription plans")
 		return
@@ -88,15 +182,108 @@ func ShowPlatformDashboard(c *gin.Context) {
 	defer planRows.Close()
 	for planRows.Next() {
 		var plan SubscriptionPlan
-		if err := planRows.Scan(&plan.Code, &plan.Name); err != nil {
+		if err := planRows.Scan(&plan.ID, &plan.Code, &plan.Name, &plan.PriceAmount, &plan.BillingInterval, &plan.IsActive); err != nil {
 			c.String(http.StatusInternalServerError, "Failed to read subscription plans")
 			return
 		}
 		plans = append(plans, plan)
 	}
+	if err := planRows.Err(); err != nil {
+		c.String(http.StatusInternalServerError, "Failed to read subscription plans")
+		return
+	}
+	planRows.Close()
+
+	features := make([]PlatformFeature, 0)
+	featureRows, err := db.DB.QueryContext(c.Request.Context(), "SELECT id, key, name, COALESCE(description, ''), value_type FROM features ORDER BY name")
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load features")
+		return
+	}
+	for featureRows.Next() {
+		var feature PlatformFeature
+		if err := featureRows.Scan(&feature.ID, &feature.Key, &feature.Name, &feature.Description, &feature.ValueType); err != nil {
+			featureRows.Close()
+			c.String(http.StatusInternalServerError, "Failed to read features")
+			return
+		}
+		features = append(features, feature)
+	}
+	if err := featureRows.Err(); err != nil {
+		featureRows.Close()
+		c.String(http.StatusInternalServerError, "Failed to read features")
+		return
+	}
+	featureRows.Close()
+	for planIndex := range plans {
+		for _, feature := range features {
+			var value string
+			err := db.DB.QueryRowContext(c.Request.Context(), `
+				SELECT value FROM plan_features WHERE plan_id = $1 AND feature_id = $2
+			`, plans[planIndex].ID, feature.ID).Scan(&value)
+			if err == sql.ErrNoRows {
+				value = ""
+			} else if err != nil {
+				c.String(http.StatusInternalServerError, "Failed to load plan features")
+				return
+			}
+			plans[planIndex].Features = append(plans[planIndex].Features, PlanFeatureValue{ID: feature.ID, Key: feature.Key, Name: feature.Name, ValueType: feature.ValueType, Value: value})
+		}
+	}
+
+	overrides := make([]AccountFeatureOverride, 0)
+	err = db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(c.Request.Context(), `
+			SELECT o.id, a.name, f.name, o.value, o.reason
+			FROM account_feature_overrides o JOIN accounts a ON a.id = o.account_id
+			JOIN features f ON f.id = o.feature_id ORDER BY a.name, f.name
+		`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var override AccountFeatureOverride
+			if err := rows.Scan(&override.ID, &override.AccountName, &override.FeatureName, &override.Value, &override.Reason); err != nil {
+				return err
+			}
+			overrides = append(overrides, override)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load account feature overrides")
+		return
+	}
+
+	supportUsers := make([]PlatformSupportUser, 0)
+	supportRows, err := db.DB.QueryContext(c.Request.Context(), `
+		SELECT u.full_name, u.username, u.email FROM platform_admins pa
+		JOIN users u ON u.id = pa.user_id WHERE pa.role = 'support' ORDER BY u.full_name
+	`)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load support users")
+		return
+	}
+	for supportRows.Next() {
+		var support PlatformSupportUser
+		if err := supportRows.Scan(&support.Name, &support.Username, &support.Email); err != nil {
+			supportRows.Close()
+			c.String(http.StatusInternalServerError, "Failed to read support users")
+			return
+		}
+		supportUsers = append(supportUsers, support)
+	}
+	if err := supportRows.Err(); err != nil {
+		supportRows.Close()
+		c.String(http.StatusInternalServerError, "Failed to read support users")
+		return
+	}
+	supportRows.Close()
 
 	c.HTML(http.StatusOK, "platform_dashboard.tmpl", gin.H{
-		"User": user, "Accounts": accounts, "Plans": plans,
+		"User": user, "Accounts": accounts, "Plans": plans, "Features": features,
+		"Overrides": overrides, "SupportUsers": supportUsers, "CanManagePlatform": user.PlatformRole == "superadmin",
 		"Error": c.Query("error"), "Notice": c.Query("notice"), "ActiveNav": "platform",
 	})
 }

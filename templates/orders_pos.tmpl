@@ -24,6 +24,7 @@
         <div class="page-title">
           <h2 style="font-size: 20px;">Active POS Session — Table: <span style="color: var(--brand);">{{ .Order.TableName }}</span></h2>
           <p style="font-size: 12px; margin-top: 2px;">Order ID: {{ .Order.ID }}</p>
+          <p class="mono-num" style="font-size: 12px; margin-top: 2px;">Sitting time: <span data-elapsed-from="{{ .Order.OpenedAt.Unix }}">--:--:--</span></p>
         </div>
         <div>
           <a href="/orders" class="btn btn-secondary" style="min-height: 38px; height: 38px;">← Back to Lists</a>
@@ -65,11 +66,11 @@
         {{ template "pos_order_sidebar" . }}
       </div>
 
-      <!-- Price Override Discount Modal -->
+      <!-- Line Discount Modal -->
       <div class="modal-backdrop" id="override-modal" style="display: none;">
         <div class="modal">
           <div class="modal-header">
-            <h3>Manual Price Override</h3>
+            <h3>Discount item</h3>
             <button class="btn btn-secondary" style="min-height:30px; min-width:30px; padding:0;" onclick="closeOverrideModal()">X</button>
           </div>
           <form id="override-form" method="POST"
@@ -79,11 +80,18 @@
                 hx-on::after-request="closeOverrideModal()">
             <div class="modal-body">
               <p style="font-size: 13px; color: var(--ink-dim); margin-bottom: 16px;">
-                You are overriding unit price for <strong id="override-item-name">item</strong>. Current: <strong id="override-item-curr">৳0.00</strong>
+                Apply a discount to <strong id="override-item-name">item</strong>.
               </p>
               <div class="form-group">
-                <label class="form-label" for="new-price">New Override Price (BDT)</label>
-                <input class="form-control" type="number" id="new-price" name="price" step="0.01" min="0" required placeholder="0.00">
+                <label class="form-label" for="line-discount-mode">Discount type</label>
+                <select class="form-control" id="line-discount-mode" name="mode">
+                  <option value="amount">Amount (BDT)</option>
+                  <option value="percent">Percentage</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="line-discount-value">Discount value</label>
+                <input class="form-control" type="number" id="line-discount-value" name="value" step="0.01" min="0" required placeholder="0.00">
               </div>
               <div class="form-group">
                 <label class="form-label" for="override-reason">Justification / Reason (Audited)</label>
@@ -92,7 +100,7 @@
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary" onclick="closeOverrideModal()">Cancel</button>
-              <button type="submit" class="btn btn-primary">Apply Price</button>
+                <button type="submit" class="btn btn-primary">Apply discount</button>
             </div>
           </form>
         </div>
@@ -183,8 +191,8 @@
 
     function openOverrideModal(lineID, itemName, currPrice) {
       document.getElementById('override-item-name').innerText = itemName;
-      document.getElementById('override-item-curr').innerText = '৳' + Number(currPrice).toFixed(2);
-      document.getElementById('new-price').value = Number(currPrice).toFixed(2);
+      document.getElementById('line-discount-value').value = '';
+      document.getElementById('line-discount-mode').value = 'amount';
       
       const form = document.getElementById('override-form');
       form.setAttribute('hx-post', '/orders/{{ .Order.ID }}/items/' + lineID + '/override');
@@ -192,6 +200,18 @@
       
       document.getElementById('override-modal').style.display = 'flex';
     }
+
+    function updateElapsedTimers() {
+      document.querySelectorAll('[data-elapsed-from]').forEach((timer) => {
+        const seconds = Math.max(0, Math.floor(Date.now() / 1000) - Number(timer.dataset.elapsedFrom));
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const remainder = seconds % 60;
+        timer.textContent = [hours, minutes, remainder].map((value) => String(value).padStart(2, '0')).join(':');
+      });
+    }
+    updateElapsedTimers();
+    setInterval(updateElapsedTimers, 1000);
 
     function closeOverrideModal() {
       document.getElementById('override-modal').style.display = 'none';
@@ -202,8 +222,20 @@
 
 {{ define "pos_order_sidebar" }}
 <div class="pos-order-sidebar" id="pos-order-sidebar">
+  {{ $order := .Order }}
   <div class="sidebar-order-header">
     <h3 style="font-size: 16px;">Current Order Lines</h3>
+    <div class="mono-num" style="font-size: 12px; color: var(--ink-dim);">Sitting: <span data-elapsed-from="{{ .Order.OpenedAt.Unix }}">--:--:--</span></div>
+    <form method="POST" action="/orders/{{ .Order.ID }}/staff"
+          hx-post="/orders/{{ .Order.ID }}/staff" hx-target="#pos-order-sidebar" hx-swap="outerHTML">
+      <label class="form-label" for="order-staff" style="font-size: 12px;">Server / waiter</label>
+      <select class="form-control" id="order-staff" name="staff_id" hx-trigger="change" hx-post="/orders/{{ .Order.ID }}/staff" hx-target="#pos-order-sidebar" hx-swap="outerHTML">
+        <option value="">Not assigned</option>
+        {{ range .Staff }}
+          <option value="{{ .ID }}" {{ if isEqualStringPtr .ID $order.StaffID }}selected{{ end }}>{{ .Name }}{{ if .CustomTitle }} · {{ .CustomTitle }}{{ else if .IsWaiter }} · Waiter{{ else if .IsCashier }} · Cashier{{ end }}</option>
+        {{ end }}
+      </select>
+    </form>
   </div>
 
   <div class="sidebar-order-items">
@@ -227,14 +259,17 @@
                     hx-vals='{"action": "inc"}'
                     hx-target="#pos-order-sidebar"
                     hx-swap="outerHTML">+</button>
+            {{ if gt .DiscountAmount 0 }}
+            <span style="font-size: 11px; color: var(--status-good);">Discount: -৳{{ formatPrice .DiscountAmount }}</span>
+            {{ end }}
             <button type="button" class="btn btn-secondary" style="min-height:24px; height:24px; padding:0 8px; font-size:11px; margin-left:8px;"
-                    onclick="openOverrideModal('{{ .ID }}', '{{ .MenuItemName }}', {{ formatPrice .UnitPrice }})">
+                      onclick="openOverrideModal('{{ .ID }}', '{{ .MenuItemName }}', {{ formatPrice .UnitPrice }})">
               Discount
             </button>
           </div>
         </div>
         <div class="mono-num" style="font-weight: 600; text-align: right;">
-          ৳{{ formatPrice (multiply .Quantity .UnitPrice) }}
+          ৳{{ formatPrice (subtract (multiply .Quantity .UnitPrice) .DiscountAmount) }}
         </div>
       </div>
     {{ else }}
@@ -243,6 +278,24 @@
       </div>
     {{ end }}
   </div>
+
+  <form method="POST" action="/orders/{{ .Order.ID }}/discount"
+        hx-post="/orders/{{ .Order.ID }}/discount" hx-target="#pos-order-sidebar" hx-swap="outerHTML"
+        style="padding: 12px; border-top: 1px solid var(--border);">
+    <label class="form-label" for="order-discount-mode" style="font-size: 12px;">Order discount</label>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+      <select class="form-control" id="order-discount-mode" name="mode">
+        <option value="amount">Amount (BDT)</option>
+        <option value="percent">Percentage</option>
+      </select>
+      <input class="form-control" type="number" name="value" step="0.01" min="0" placeholder="0.00">
+    </div>
+    <input class="form-control" type="text" name="reason" required placeholder="Discount reason" style="margin-top: 8px;">
+    <div style="display: flex; gap: 8px; margin-top: 8px;">
+      <button class="btn btn-secondary" type="submit" style="min-height: 32px;">Apply</button>
+      <button class="btn btn-secondary" type="submit" name="clear" value="true" formnovalidate style="min-height: 32px;">Clear</button>
+    </div>
+  </form>
 
   <!-- Sidebar Totals & Check-out -->
   <div class="sidebar-order-totals">

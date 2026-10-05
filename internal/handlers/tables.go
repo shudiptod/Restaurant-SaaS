@@ -99,8 +99,14 @@ func ShowTables(c *gin.Context) {
 
 		// Fetch tables
 		rows, err := tx.QueryContext(c.Request.Context(), `
-			SELECT id, name, capacity, status FROM tables 
-			WHERE restaurant_id = $1 ORDER BY name
+			SELECT t.id, t.name, t.capacity, t.status, active_order.opened_at
+			FROM tables t
+			LEFT JOIN LATERAL (
+				SELECT opened_at FROM orders
+				WHERE table_id = t.id AND restaurant_id = t.restaurant_id AND status = 'open'
+				ORDER BY opened_at DESC LIMIT 1
+			) active_order ON true
+			WHERE t.restaurant_id = $1 ORDER BY t.name
 		`, activeRestID)
 		if err != nil {
 			return err
@@ -108,10 +114,15 @@ func ShowTables(c *gin.Context) {
 		defer rows.Close()
 		for rows.Next() {
 			var t models.Table
+			var openedAt sql.NullTime
 			t.RestaurantID = activeRestID
-			if err := rows.Scan(&t.ID, &t.Name, &t.Capacity, &t.Status); err == nil {
-				tables = append(tables, t)
+			if err := rows.Scan(&t.ID, &t.Name, &t.Capacity, &t.Status, &openedAt); err != nil {
+				return err
 			}
+			if openedAt.Valid {
+				t.OpenedAt = &openedAt.Time
+			}
+			tables = append(tables, t)
 		}
 		return nil
 	})
@@ -217,6 +228,17 @@ func UpdateTableStatus(c *gin.Context) {
 	table.Status = newStatus
 
 	err := db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
+		if newStatus == "available" {
+			var hasOpenOrder bool
+			if err := tx.QueryRowContext(c.Request.Context(), `
+				SELECT EXISTS(SELECT 1 FROM orders WHERE table_id = $1 AND restaurant_id = $2 AND status = 'open')
+			`, tableID, activeRestID).Scan(&hasOpenOrder); err != nil {
+				return err
+			}
+			if hasOpenOrder {
+				newStatus = "occupied"
+			}
+		}
 		// Update table status
 		_, err := tx.ExecContext(c.Request.Context(), `
 			UPDATE tables SET status = $1 WHERE id = $2 AND restaurant_id = $3
@@ -226,9 +248,20 @@ func UpdateTableStatus(c *gin.Context) {
 		}
 
 		// Fetch updated details
-		return tx.QueryRowContext(c.Request.Context(), `
-			SELECT name, capacity FROM tables WHERE id = $1
-		`, tableID).Scan(&table.Name, &table.Capacity)
+		var openedAt sql.NullTime
+		err = tx.QueryRowContext(c.Request.Context(), `
+			SELECT t.name, t.capacity, active_order.opened_at
+			FROM tables t
+			LEFT JOIN LATERAL (
+				SELECT opened_at FROM orders WHERE table_id = t.id AND restaurant_id = t.restaurant_id AND status = 'open'
+				ORDER BY opened_at DESC LIMIT 1
+			) active_order ON true
+			WHERE t.id = $1 AND t.restaurant_id = $2
+		`, tableID, activeRestID).Scan(&table.Name, &table.Capacity, &openedAt)
+		if openedAt.Valid {
+			table.OpenedAt = &openedAt.Time
+		}
+		return err
 	})
 
 	if err != nil {
@@ -243,6 +276,10 @@ func UpdateTableStatus(c *gin.Context) {
 // SwitchRestaurant handles updating active restaurant cookie
 func SwitchRestaurant(c *gin.Context) {
 	restID := c.PostForm("restaurant_id")
+	if restID == "__add_restaurant__" {
+		c.Redirect(http.StatusSeeOther, "/restaurants/new")
+		return
+	}
 	if restID != "" {
 		c.SetCookie("rms_active_restaurant", restID, 86400*30, "/", "", false, true)
 	}

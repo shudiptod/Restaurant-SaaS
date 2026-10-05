@@ -120,7 +120,7 @@
                 <select class="form-control" id="table-select" name="table_id">
                   <option value="">Takeaway / Walk-in</option>
                   {{ range .AvailableTables }}
-                    <option value="{{ .ID }}">{{ .Name }} ({{ .Capacity }} pax)</option>
+                    <option value="{{ .ID }}">{{ .Name }} ({{ .Capacity }} pax, {{ .Status }})</option>
                   {{ end }}
                 </select>
                 <p style="font-size: 12px; color: var(--ink-dim); margin-top: 6px;">Note: Table status will switch to "Occupied" automatically.</p>

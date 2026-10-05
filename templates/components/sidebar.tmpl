@@ -12,13 +12,14 @@
               {{ .RestaurantName }}
             </option>
           {{ end }}
+          {{ if .User.CanManageAccount }}<option value="__add_restaurant__">+ Add another restaurant</option>{{ end }}
         </select>
       </form>
       {{ end }}
     </div>
     
     <nav class="nav-links">
-      {{ if and .User.IsPlatformAdmin (eq .User.PlatformRole "superadmin") }}
+      {{ if .User.IsPlatformAdmin }}
       <li class="nav-item {{ if eq .ActiveNav "platform" }}active{{ end }}">
         <a href="/platform"><span>▦</span> Platform</a>
       </li>
@@ -37,6 +38,12 @@
         <a href="/orders">
           <span>🛎️</span> POS Orders
         </a>
+      </li>
+      <li class="nav-item {{ if eq .ActiveNav "staff" }}active{{ end }}">
+        <a href="/staff"><span>♙</span> Staff</a>
+      </li>
+      <li class="nav-item {{ if eq .ActiveNav "team" }}active{{ end }}">
+        <a href="/team"><span>♧</span> Users &amp; access</a>
       </li>
       <li class="nav-item {{ if eq .ActiveNav "menu" }}active{{ end }}">
         <a href="/menu">
@@ -73,7 +80,7 @@
         {{ end }}
       </span>
     </div>
-    <form action="/logout" method="POST" style="margin: 0;">
+    <form action="{{ if .User.IsPlatformAdmin }}/platform/logout{{ else }}/logout{{ end }}" method="POST" style="margin: 0;">
       <button type="submit" class="btn btn-secondary" style="width: 100%; min-height: 40px; padding: 6px;">
         Log Out
       </button>

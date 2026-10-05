@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Platform Access</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <style>body { background-color: var(--ink); } .platform-login-card { border-top: 4px solid var(--status-pending); }</style>
+</head>
+<body class="login-body">
+  <main class="card login-card platform-login-card">
+    <div class="login-header">
+      <h2>Platform Access</h2>
+      <p>Authorized platform personnel only</p>
+    </div>
+    {{ if .Error }}<div class="login-error" role="alert">{{ .Error }}</div>{{ end }}
+    <form action="/platform/login" method="POST">
+      <div class="form-group">
+        <label class="form-label" for="platform-username">Platform username</label>
+        <input class="form-control" id="platform-username" name="username" required autocomplete="username">
+      </div>
+      <div class="form-group" style="margin-bottom: 24px;">
+        <label class="form-label" for="platform-password">Password</label>
+        <input class="form-control" id="platform-password" name="password" type="password" required autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary" type="submit" style="width: 100%;">Sign in to platform</button>
+    </form>
+  </main>
+</body>
+</html>

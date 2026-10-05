@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"net/http"
 	"restaurant-saas/internal/db"
 	"restaurant-saas/internal/models"
@@ -28,18 +29,18 @@ func ShowOrdersLists(c *gin.Context) {
 	var availableTables []models.Table
 
 	err := db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
-		// Load open tables for table assignment in new order modal
+		// Include occupied tables so an existing table session can be resumed.
 		tRows, err := tx.QueryContext(c.Request.Context(), `
-			SELECT id, name, capacity FROM tables
-			WHERE restaurant_id = $1 AND status = 'available'
+			SELECT id, name, capacity, status FROM tables
+			WHERE restaurant_id = $1
 			ORDER BY name
-		`, activeRestID)
+			`, activeRestID)
 		if err == nil {
 			defer tRows.Close()
 			for tRows.Next() {
 				var t models.Table
 				t.RestaurantID = activeRestID
-				if err := tRows.Scan(&t.ID, &t.Name, &t.Capacity); err == nil {
+				if err := tRows.Scan(&t.ID, &t.Name, &t.Capacity, &t.Status); err == nil {
 					availableTables = append(availableTables, t)
 				}
 			}
@@ -60,8 +61,14 @@ func ShowOrdersLists(c *gin.Context) {
 				var tabID sql.NullString
 				var tabName sql.NullString
 				if err := oRows.Scan(&o.ID, &tabID, &tabName, &o.Status, &o.OpenedAt, &o.Subtotal, &o.TotalAmount); err == nil {
-					if tabID.Valid { o.TableID = &tabID.String }
-					if tabName.Valid { o.TableName = tabName.String } else { o.TableName = "Takeaway" }
+					if tabID.Valid {
+						o.TableID = &tabID.String
+					}
+					if tabName.Valid {
+						o.TableName = tabName.String
+					} else {
+						o.TableName = "Takeaway"
+					}
 					activeOrders = append(activeOrders, o)
 				}
 			}
@@ -83,8 +90,14 @@ func ShowOrdersLists(c *gin.Context) {
 				var tabName sql.NullString
 				var closedAt time.Time
 				if err := cRows.Scan(&o.ID, &tabID, &tabName, &o.Status, &o.OpenedAt, &closedAt, &o.Subtotal, &o.TotalAmount); err == nil {
-					if tabID.Valid { o.TableID = &tabID.String }
-					if tabName.Valid { o.TableName = tabName.String } else { o.TableName = "Takeaway" }
+					if tabID.Valid {
+						o.TableID = &tabID.String
+					}
+					if tabName.Valid {
+						o.TableName = tabName.String
+					} else {
+						o.TableName = "Takeaway"
+					}
 					o.ClosedAt = &closedAt
 					closedOrders = append(closedOrders, o)
 				}
@@ -127,9 +140,28 @@ func CreateOrder(c *gin.Context) {
 		var tableVal interface{}
 		if tableID != "" {
 			tableVal = tableID
-			// Set table to occupied
-			_, err := tx.ExecContext(c.Request.Context(), "UPDATE tables SET status = 'occupied' WHERE id = $1 AND restaurant_id = $2", tableID, activeRestID)
-			if err != nil {
+			// Serialize order creation for this table before checking for an open order.
+			var lockedTableID string
+			if err := tx.QueryRowContext(c.Request.Context(), `
+				SELECT id FROM tables WHERE id = $1 AND restaurant_id = $2 FOR UPDATE
+			`, tableID, activeRestID).Scan(&lockedTableID); err != nil {
+				return err
+			}
+
+			err := tx.QueryRowContext(c.Request.Context(), `
+				SELECT id FROM orders
+				WHERE restaurant_id = $1 AND table_id = $2 AND status = 'open'
+				ORDER BY opened_at ASC LIMIT 1
+			`, activeRestID, tableID).Scan(&orderID)
+			if err == nil {
+				_, err = tx.ExecContext(c.Request.Context(), "UPDATE tables SET status = 'occupied' WHERE id = $1", tableID)
+				return err
+			}
+			if err != sql.ErrNoRows {
+				return err
+			}
+
+			if _, err := tx.ExecContext(c.Request.Context(), "UPDATE tables SET status = 'occupied' WHERE id = $1", tableID); err != nil {
 				return err
 			}
 		} else {
@@ -168,26 +200,49 @@ func ShowOrderDetails(c *gin.Context) {
 	var orderItems []models.OrderItem
 	var categories []models.MenuCategory
 	var menuItems []models.MenuItem
+	var staff []models.RestaurantStaff
 
 	err := db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
 		// Load Order details
-		var tabID sql.NullString
-		var tabName sql.NullString
+		var tabID, tabName, staffID, staffName, discountType sql.NullString
+		var discountValue sql.NullInt64
 		err := tx.QueryRowContext(c.Request.Context(), `
-			SELECT o.id, o.table_id, t.name, o.status, o.subtotal, o.tax_amount, o.discount_amount, o.total_amount
+			SELECT o.id, o.table_id, t.name, o.status, o.opened_at, o.subtotal, o.tax_amount,
+			       o.discount_amount, o.total_amount, o.staff_id, rs.name, o.discount_type, o.discount_value
 			FROM orders o
 			LEFT JOIN tables t ON t.id = o.table_id
+			LEFT JOIN restaurant_staff rs ON rs.id = o.staff_id
 			WHERE o.id = $1 AND o.restaurant_id = $2
-		`, orderID, activeRestID).Scan(&order.ID, &tabID, &tabName, &order.Status, &order.Subtotal, &order.TaxAmount, &order.DiscountAmount, &order.TotalAmount)
+		`, orderID, activeRestID).Scan(&order.ID, &tabID, &tabName, &order.Status, &order.OpenedAt, &order.Subtotal, &order.TaxAmount, &order.DiscountAmount, &order.TotalAmount, &staffID, &staffName, &discountType, &discountValue)
 		if err != nil {
 			return err
 		}
-		if tabID.Valid { order.TableID = &tabID.String }
-		if tabName.Valid { order.TableName = tabName.String } else { order.TableName = "Takeaway" }
+		if tabID.Valid {
+			order.TableID = &tabID.String
+		}
+		if tabName.Valid {
+			order.TableName = tabName.String
+		} else {
+			order.TableName = "Takeaway"
+		}
+		if staffID.Valid {
+			order.StaffID = &staffID.String
+		}
+		if staffName.Valid {
+			order.StaffName = staffName.String
+		}
+		if discountType.Valid {
+			order.DiscountType = &discountType.String
+		}
+		if discountValue.Valid {
+			value := int(discountValue.Int64)
+			order.DiscountValue = &value
+		}
 
 		// Load Order Items
 		rows, err := tx.QueryContext(c.Request.Context(), `
-			SELECT oi.id, oi.menu_item_id, mi.name, oi.quantity, oi.unit_price, oi.notes
+			SELECT oi.id, oi.menu_item_id, mi.name, oi.quantity, oi.unit_price,
+			       oi.discount_type, oi.discount_value, oi.discount_amount, oi.notes
 			FROM order_items oi
 			JOIN menu_items mi ON mi.id = oi.menu_item_id
 			WHERE oi.order_id = $1
@@ -197,12 +252,42 @@ func ShowOrderDetails(c *gin.Context) {
 			for rows.Next() {
 				var oi models.OrderItem
 				oi.OrderID = orderID
-				var notes sql.NullString
-				if err := rows.Scan(&oi.ID, &oi.MenuItemID, &oi.MenuItemName, &oi.Quantity, &oi.UnitPrice, &notes); err == nil {
-					if notes.Valid { oi.Notes = &notes.String }
+				var notes, discountType sql.NullString
+				var discountValue sql.NullInt64
+				if err := rows.Scan(&oi.ID, &oi.MenuItemID, &oi.MenuItemName, &oi.Quantity, &oi.UnitPrice, &discountType, &discountValue, &oi.DiscountAmount, &notes); err == nil {
+					if notes.Valid {
+						oi.Notes = &notes.String
+					}
+					if discountType.Valid {
+						oi.DiscountType = &discountType.String
+					}
+					if discountValue.Valid {
+						value := int(discountValue.Int64)
+						oi.DiscountValue = &value
+					}
 					orderItems = append(orderItems, oi)
 				}
 			}
+		}
+
+		staffRows, err := tx.QueryContext(c.Request.Context(), `
+			SELECT id, restaurant_id, name, is_waiter, is_cashier, custom_title, is_active
+			FROM restaurant_staff WHERE restaurant_id = $1 AND is_active = true ORDER BY name
+		`, activeRestID)
+		if err != nil {
+			return err
+		}
+		defer staffRows.Close()
+		for staffRows.Next() {
+			var member models.RestaurantStaff
+			var title sql.NullString
+			if err := staffRows.Scan(&member.ID, &member.RestaurantID, &member.Name, &member.IsWaiter, &member.IsCashier, &title, &member.IsActive); err != nil {
+				return err
+			}
+			if title.Valid {
+				member.CustomTitle = &title.String
+			}
+			staff = append(staff, member)
 		}
 
 		// Load Menu details for display
@@ -228,7 +313,9 @@ func ShowOrderDetails(c *gin.Context) {
 				var mi models.MenuItem
 				var catID sql.NullString
 				if err := miRows.Scan(&mi.ID, &catID, &mi.Name, &mi.Price); err == nil {
-					if catID.Valid { mi.CategoryID = &catID.String }
+					if catID.Valid {
+						mi.CategoryID = &catID.String
+					}
 					menuItems = append(menuItems, mi)
 				}
 			}
@@ -250,6 +337,7 @@ func ShowOrderDetails(c *gin.Context) {
 		"OrderItems":         orderItems,
 		"Categories":         categories,
 		"MenuItems":          menuItems,
+		"Staff":              staff,
 	})
 }
 
@@ -381,7 +469,7 @@ func UpdateItemQty(c *gin.Context) {
 	c.Redirect(http.StatusSeeOther, "/orders/"+orderID)
 }
 
-// OverrideItemPrice adjusts unit price and logs audit adjust trails
+// OverrideItemPrice applies a fixed or percentage discount to an order line.
 func OverrideItemPrice(c *gin.Context) {
 	val, exists := c.Get("user")
 	if !exists {
@@ -393,8 +481,11 @@ func OverrideItemPrice(c *gin.Context) {
 
 	orderID := c.Param("id")
 	orderItemID := c.Param("item_id")
-	newPriceFloat, _ := strconv.ParseFloat(c.PostForm("price"), 64)
-	newPricePoisha := int(newPriceFloat * 100)
+	discountType, discountValue, err := parseDiscount(c.PostForm("mode"), c.PostForm("value"))
+	if err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
 	reason := c.PostForm("reason")
 
 	if reason == "" {
@@ -402,25 +493,37 @@ func OverrideItemPrice(c *gin.Context) {
 		return
 	}
 
-	err := db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
-		// Fetch original unit_price
-		var originalPrice int
-		err := tx.QueryRowContext(c.Request.Context(), "SELECT unit_price FROM order_items WHERE id = $1 AND order_id = $2", orderItemID, orderID).Scan(&originalPrice)
+	err = db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
+		var originalPrice, quantity int
+		var status string
+		err := tx.QueryRowContext(c.Request.Context(), `
+			SELECT oi.unit_price, oi.quantity, o.status FROM order_items oi
+			JOIN orders o ON o.id = oi.order_id
+			WHERE oi.id = $1 AND oi.order_id = $2 AND o.restaurant_id = $3
+		`, orderItemID, orderID, activeRestID).Scan(&originalPrice, &quantity, &status)
 		if err != nil {
 			return err
 		}
-
-		// Update price
-		_, err = tx.ExecContext(c.Request.Context(), "UPDATE order_items SET unit_price = $1 WHERE id = $2", newPricePoisha, orderItemID)
-		if err != nil {
-			return err
+		if status != "open" {
+			return fmt.Errorf("order is closed")
 		}
-
-		// Log audit override trail
+		if discountType == "percent" && discountValue > 10000 {
+			return fmt.Errorf("percentage discount cannot exceed 100%%")
+		}
+		lineAmount := quantity * originalPrice
+		lineDiscount := calculateDiscount(lineAmount, discountType, discountValue)
+		effectiveUnitPrice := (lineAmount - lineDiscount + quantity/2) / quantity
 		_, err = tx.ExecContext(c.Request.Context(), `
-			INSERT INTO order_item_price_adjustments (order_item_id, restaurant_id, original_price, adjusted_price, reason, adjusted_by)
-			VALUES ($1, $2, $3, $4, $5, $6)
-		`, orderItemID, activeRestID, originalPrice, newPricePoisha, reason, user.ID)
+			UPDATE order_items SET discount_type = $1, discount_value = $2, discount_amount = $3 WHERE id = $4
+		`, discountType, discountValue, lineDiscount, orderItemID)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.ExecContext(c.Request.Context(), `
+			INSERT INTO order_item_price_adjustments (order_item_id, restaurant_id, original_price, adjusted_price, reason, adjusted_by, discount_type, discount_value)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, orderItemID, activeRestID, originalPrice, effectiveUnitPrice, reason, user.ID, discountType, discountValue)
 		if err != nil {
 			return err
 		}
@@ -441,19 +544,171 @@ func OverrideItemPrice(c *gin.Context) {
 	c.Redirect(http.StatusSeeOther, "/orders/"+orderID)
 }
 
+func parseDiscount(mode, valueText string) (string, int, error) {
+	value, err := strconv.ParseFloat(valueText, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return "", 0, fmt.Errorf("enter a valid non-negative discount")
+	}
+	if mode == "percent" {
+		if value > 100 {
+			return "", 0, fmt.Errorf("percentage discount cannot exceed 100%%")
+		}
+		return mode, int(math.Round(value * 100)), nil
+	}
+	if mode != "amount" {
+		return "", 0, fmt.Errorf("discount must be an amount or percentage")
+	}
+	if value > float64(math.MaxInt32)/100 {
+		return "", 0, fmt.Errorf("discount amount is too large")
+	}
+	return mode, int(math.Round(value * 100)), nil
+}
+
+func calculateDiscount(base int, mode string, value int) int {
+	if base <= 0 || value <= 0 {
+		return 0
+	}
+	if mode == "percent" {
+		value = (base*value + 5000) / 10000
+	}
+	if value > base {
+		return base
+	}
+	return value
+}
+
+func SetOrderStaff(c *gin.Context) {
+	value, exists := c.Get("user")
+	if !exists {
+		c.String(http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	user := value.(CurrentUser)
+	activeRestID := GetActiveRestaurantID(c, user)
+	orderID := c.Param("id")
+	staffID := c.PostForm("staff_id")
+	err := db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
+		var status string
+		if err := tx.QueryRowContext(c.Request.Context(), "SELECT status FROM orders WHERE id = $1 AND restaurant_id = $2", orderID, activeRestID).Scan(&status); err != nil {
+			return err
+		}
+		if status != "open" {
+			return fmt.Errorf("order is closed")
+		}
+		if staffID != "" {
+			var active bool
+			if err := tx.QueryRowContext(c.Request.Context(), "SELECT is_active FROM restaurant_staff WHERE id = $1 AND restaurant_id = $2", staffID, activeRestID).Scan(&active); err != nil {
+				return err
+			}
+			if !active {
+				return fmt.Errorf("staff member is inactive")
+			}
+			_, err := tx.ExecContext(c.Request.Context(), "UPDATE orders SET staff_id = $1 WHERE id = $2 AND restaurant_id = $3", staffID, orderID, activeRestID)
+			return err
+		}
+		_, err := tx.ExecContext(c.Request.Context(), "UPDATE orders SET staff_id = NULL WHERE id = $1 AND restaurant_id = $2", orderID, activeRestID)
+		return err
+	})
+	if err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+	if c.GetHeader("HX-Request") == "true" {
+		renderPOSOrderSidebar(c, orderID, activeRestID)
+		return
+	}
+	c.Redirect(http.StatusSeeOther, "/orders/"+orderID)
+}
+
+func SetOrderDiscount(c *gin.Context) {
+	value, exists := c.Get("user")
+	if !exists {
+		c.String(http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	user := value.(CurrentUser)
+	activeRestID := GetActiveRestaurantID(c, user)
+	orderID := c.Param("id")
+	discountType, discountValue, err := parseDiscount(c.PostForm("mode"), c.PostForm("value"))
+	reason := c.PostForm("reason")
+	clearing := c.PostForm("clear") == "true"
+	if clearing {
+		discountType, discountValue, err = "", 0, nil
+		reason = "Order discount cleared"
+	}
+	if err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+	if reason == "" {
+		c.String(http.StatusBadRequest, "Reason is required for an order discount")
+		return
+	}
+	err = db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
+		var status string
+		if err := tx.QueryRowContext(c.Request.Context(), "SELECT status FROM orders WHERE id = $1 AND restaurant_id = $2", orderID, activeRestID).Scan(&status); err != nil {
+			return err
+		}
+		if status != "open" {
+			return fmt.Errorf("order is closed")
+		}
+		if discountType == "percent" && discountValue > 10000 {
+			return fmt.Errorf("percentage discount cannot exceed 100%%")
+		}
+		if clearing {
+			if _, err := tx.ExecContext(c.Request.Context(), "UPDATE orders SET discount_type = NULL, discount_value = NULL WHERE id = $1", orderID); err != nil {
+				return err
+			}
+		} else if _, err := tx.ExecContext(c.Request.Context(), "UPDATE orders SET discount_type = $1, discount_value = $2 WHERE id = $3", discountType, discountValue, orderID); err != nil {
+			return err
+		}
+		if err := RecalculateOrderTotals(c.Request.Context(), tx, orderID, activeRestID); err != nil {
+			return err
+		}
+		var discountAmount int
+		if err := tx.QueryRowContext(c.Request.Context(), `
+			SELECT discount_amount - COALESCE((SELECT SUM(discount_amount) FROM order_items WHERE order_id = $1), 0)
+			FROM orders WHERE id = $1
+		`, orderID).Scan(&discountAmount); err != nil {
+			return err
+		}
+		auditType, auditValue := discountType, discountValue
+		if clearing {
+			auditType, auditValue = "cleared", 0
+		}
+		_, err := tx.ExecContext(c.Request.Context(), `
+			INSERT INTO order_discount_adjustments (order_id, restaurant_id, discount_type, discount_value, discount_amount, reason, adjusted_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, orderID, activeRestID, auditType, auditValue, discountAmount, reason, user.ID)
+		return err
+	})
+	if err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+	if c.GetHeader("HX-Request") == "true" {
+		renderPOSOrderSidebar(c, orderID, activeRestID)
+		return
+	}
+	c.Redirect(http.StatusSeeOther, "/orders/"+orderID)
+}
+
 func renderPOSOrderSidebar(c *gin.Context, orderID string, activeRestID string) {
 	var order models.Order
 	var orderItems []models.OrderItem
+	var staff []models.RestaurantStaff
 
 	err := db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
-		var tabID sql.NullString
-		var tabName sql.NullString
+		var tabID, tabName, staffID, staffName, discountType sql.NullString
+		var discountValue sql.NullInt64
 		err := tx.QueryRowContext(c.Request.Context(), `
-			SELECT o.id, o.table_id, t.name, o.status, o.subtotal, o.tax_amount, o.discount_amount, o.total_amount
+			SELECT o.id, o.table_id, t.name, o.status, o.opened_at, o.subtotal, o.tax_amount,
+			       o.discount_amount, o.total_amount, o.staff_id, rs.name, o.discount_type, o.discount_value
 			FROM orders o
 			LEFT JOIN tables t ON t.id = o.table_id
+			LEFT JOIN restaurant_staff rs ON rs.id = o.staff_id
 			WHERE o.id = $1 AND o.restaurant_id = $2
-		`, orderID, activeRestID).Scan(&order.ID, &tabID, &tabName, &order.Status, &order.Subtotal, &order.TaxAmount, &order.DiscountAmount, &order.TotalAmount)
+		`, orderID, activeRestID).Scan(&order.ID, &tabID, &tabName, &order.Status, &order.OpenedAt, &order.Subtotal, &order.TaxAmount, &order.DiscountAmount, &order.TotalAmount, &staffID, &staffName, &discountType, &discountValue)
 		if err != nil {
 			return err
 		}
@@ -465,9 +720,23 @@ func renderPOSOrderSidebar(c *gin.Context, orderID string, activeRestID string) 
 		} else {
 			order.TableName = "Takeaway"
 		}
+		if staffID.Valid {
+			order.StaffID = &staffID.String
+		}
+		if staffName.Valid {
+			order.StaffName = staffName.String
+		}
+		if discountType.Valid {
+			order.DiscountType = &discountType.String
+		}
+		if discountValue.Valid {
+			value := int(discountValue.Int64)
+			order.DiscountValue = &value
+		}
 
 		rows, err := tx.QueryContext(c.Request.Context(), `
-			SELECT oi.id, oi.menu_item_id, mi.name, oi.quantity, oi.unit_price, oi.notes
+			SELECT oi.id, oi.menu_item_id, mi.name, oi.quantity, oi.unit_price,
+			       oi.discount_type, oi.discount_value, oi.discount_amount, oi.notes
 			FROM order_items oi
 			JOIN menu_items mi ON mi.id = oi.menu_item_id
 			WHERE oi.order_id = $1
@@ -478,14 +747,41 @@ func renderPOSOrderSidebar(c *gin.Context, orderID string, activeRestID string) 
 			for rows.Next() {
 				var oi models.OrderItem
 				oi.OrderID = orderID
-				var notes sql.NullString
-				if err := rows.Scan(&oi.ID, &oi.MenuItemID, &oi.MenuItemName, &oi.Quantity, &oi.UnitPrice, &notes); err == nil {
+				var notes, discountType sql.NullString
+				var discountValue sql.NullInt64
+				if err := rows.Scan(&oi.ID, &oi.MenuItemID, &oi.MenuItemName, &oi.Quantity, &oi.UnitPrice, &discountType, &discountValue, &oi.DiscountAmount, &notes); err == nil {
 					if notes.Valid {
 						oi.Notes = &notes.String
+					}
+					if discountType.Valid {
+						oi.DiscountType = &discountType.String
+					}
+					if discountValue.Valid {
+						value := int(discountValue.Int64)
+						oi.DiscountValue = &value
 					}
 					orderItems = append(orderItems, oi)
 				}
 			}
+		}
+		staffRows, err := tx.QueryContext(c.Request.Context(), `
+			SELECT id, restaurant_id, name, is_waiter, is_cashier, custom_title, is_active
+			FROM restaurant_staff WHERE restaurant_id = $1 AND is_active = true ORDER BY name
+		`, activeRestID)
+		if err != nil {
+			return err
+		}
+		defer staffRows.Close()
+		for staffRows.Next() {
+			var member models.RestaurantStaff
+			var title sql.NullString
+			if err := staffRows.Scan(&member.ID, &member.RestaurantID, &member.Name, &member.IsWaiter, &member.IsCashier, &title, &member.IsActive); err != nil {
+				return err
+			}
+			if title.Valid {
+				member.CustomTitle = &title.String
+			}
+			staff = append(staff, member)
 		}
 		return nil
 	})
@@ -498,6 +794,7 @@ func renderPOSOrderSidebar(c *gin.Context, orderID string, activeRestID string) 
 	c.HTML(http.StatusOK, "pos_order_sidebar", gin.H{
 		"Order":      order,
 		"OrderItems": orderItems,
+		"Staff":      staff,
 	})
 }
 
@@ -515,6 +812,9 @@ func CloseOrder(c *gin.Context) {
 	paymentMethod := c.PostForm("payment_method")
 
 	err := db.WithTx(c.Request.Context(), func(tx *sql.Tx) error {
+		if err := RecalculateOrderTotals(c.Request.Context(), tx, orderID, activeRestID); err != nil {
+			return err
+		}
 		// Fetch order details
 		var tableID sql.NullString
 		var subtotal, discount, total int
@@ -552,17 +852,18 @@ func CloseOrder(c *gin.Context) {
 		var taxAmount int
 		var totalAmount int
 
-		serviceCharge := (subtotal * serviceChargeRateBps) / 10000
+		taxableSubtotal := subtotal - discount
+		serviceCharge := (taxableSubtotal * serviceChargeRateBps) / 10000
 
 		if vatInclusive {
 			// Subtotal includes VAT. Find the net amount and extract VAT
-			netRevenue := (subtotal * 10000) / (10000 + vatRateBps)
-			taxAmount = subtotal - netRevenue
-			totalAmount = subtotal - discount + serviceCharge
+			netRevenue := (taxableSubtotal * 10000) / (10000 + vatRateBps)
+			taxAmount = taxableSubtotal - netRevenue
+			totalAmount = taxableSubtotal + serviceCharge
 		} else {
 			// Subtotal is net. Calculate tax on top
-			taxAmount = (subtotal * vatRateBps) / 10000
-			totalAmount = subtotal + taxAmount - discount + serviceCharge
+			taxAmount = (taxableSubtotal * vatRateBps) / 10000
+			totalAmount = taxableSubtotal + taxAmount + serviceCharge
 		}
 
 		// Close Order
@@ -609,7 +910,11 @@ func CloseOrder(c *gin.Context) {
 
 		// Release dining table
 		if tableID.Valid {
-			_, err = tx.ExecContext(c.Request.Context(), "UPDATE tables SET status = 'available' WHERE id = $1", tableID.String)
+			_, err = tx.ExecContext(c.Request.Context(), `
+				UPDATE tables SET status = 'available'
+				WHERE id = $1 AND restaurant_id = $2
+				AND NOT EXISTS (SELECT 1 FROM orders WHERE table_id = $1 AND restaurant_id = $2 AND status = 'open')
+			`, tableID.String, activeRestID)
 			if err != nil {
 				return err
 			}
@@ -628,11 +933,39 @@ func CloseOrder(c *gin.Context) {
 
 // RecalculateOrderTotals aggregates order_items prices to orders summary
 func RecalculateOrderTotals(ctx context.Context, tx *sql.Tx, orderID string, restaurantID string) error {
-	var subtotal int
-	err := tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(quantity * unit_price), 0) FROM order_items WHERE order_id = $1", orderID).Scan(&subtotal)
+	_, err := tx.ExecContext(ctx, `
+		UPDATE order_items
+		SET discount_amount = CASE
+			WHEN discount_type = 'amount' THEN LEAST(quantity * unit_price, discount_value)
+			WHEN discount_type = 'percent' THEN LEAST(quantity * unit_price, (quantity * unit_price * discount_value + 5000) / 10000)
+			ELSE 0
+		END
+		WHERE order_id = $1
+	`, orderID)
 	if err != nil {
 		return err
 	}
+	var subtotal, lineDiscount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(quantity * unit_price), 0), COALESCE(SUM(discount_amount), 0)
+		FROM order_items WHERE order_id = $1
+	`, orderID).Scan(&subtotal, &lineDiscount); err != nil {
+		return err
+	}
+	var discountType sql.NullString
+	var discountValue sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT discount_type, discount_value FROM orders
+		WHERE id = $1 AND restaurant_id = $2
+	`, orderID, restaurantID).Scan(&discountType, &discountValue); err != nil {
+		return err
+	}
+	orderDiscount := 0
+	if discountType.Valid && discountValue.Valid {
+		orderDiscount = calculateDiscount(subtotal-lineDiscount, discountType.String, int(discountValue.Int64))
+	}
+	discount := lineDiscount + orderDiscount
+	taxableSubtotal := subtotal - discount
 
 	// Fetch tax rates
 	var vatRateBps int
@@ -650,24 +983,24 @@ func RecalculateOrderTotals(ctx context.Context, tx *sql.Tx, orderID string, res
 		return err
 	}
 
-	serviceCharge := (subtotal * serviceChargeRateBps) / 10000
+	serviceCharge := (taxableSubtotal * serviceChargeRateBps) / 10000
 	var taxAmount int
 	var totalAmount int
 
 	if vatInclusive {
-		netRevenue := (subtotal * 10000) / (10000 + vatRateBps)
-		taxAmount = subtotal - netRevenue
-		totalAmount = subtotal + serviceCharge
+		netRevenue := (taxableSubtotal * 10000) / (10000 + vatRateBps)
+		taxAmount = taxableSubtotal - netRevenue
+		totalAmount = taxableSubtotal + serviceCharge
 	} else {
-		taxAmount = (subtotal * vatRateBps) / 10000
-		totalAmount = subtotal + taxAmount + serviceCharge
+		taxAmount = (taxableSubtotal * vatRateBps) / 10000
+		totalAmount = taxableSubtotal + taxAmount + serviceCharge
 	}
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE orders 
-		SET subtotal = $1, tax_amount = $2, total_amount = $3
-		WHERE id = $4
-	`, subtotal, taxAmount, totalAmount, orderID)
+		SET subtotal = $1, discount_amount = $2, tax_amount = $3, total_amount = $4
+		WHERE id = $5 AND restaurant_id = $6
+	`, subtotal, discount, taxAmount, totalAmount, orderID, restaurantID)
 	return err
 }
 
@@ -695,8 +1028,12 @@ func ShowMockInvoice(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		if addr.Valid { restAddress = addr.String }
-		if phone.Valid { restPhone = phone.String }
+		if addr.Valid {
+			restAddress = addr.String
+		}
+		if phone.Valid {
+			restPhone = phone.String
+		}
 
 		// Invoice details
 		var pdf sql.NullString
@@ -707,7 +1044,9 @@ func ShowMockInvoice(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		if pdf.Valid { invoice.PdfURL = &pdf.String }
+		if pdf.Valid {
+			invoice.PdfURL = &pdf.String
+		}
 
 		// Order table context
 		var tabName sql.NullString

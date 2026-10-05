@@ -4,19 +4,19 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"html/template"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"restaurant-saas"
 	"restaurant-saas/internal/auth"
 	"restaurant-saas/internal/db"
 	"restaurant-saas/internal/handlers"
-	"restaurant-saas"
 	"strings"
 	"time"
-	"github.com/gin-gonic/gin"
 )
 
 // loadDotEnv loads environment variables from a .env file if present
@@ -65,20 +65,20 @@ func main() {
 	defer db.DB.Close()
 
 	// 3. Run database schema migrations
-    log.Println("Running schema migrations...")
-    
-    // Pass the embedded Files and the directory name
-    err = db.RunMigrations(webassets.Files, "docs")
-    if err != nil {
-        log.Fatalf("Migration runner failed: %v", err)
-    }
-    log.Println("Schema migrations completed successfully.")
+	log.Println("Running schema migrations...")
 
-    // Read the seed file from memory too!
-    seedContent, err := webassets.Files.ReadFile("docs/seed.sql")
-    if err != nil {
-        log.Fatalf("Failed to read reference seed: %v", err)
-    }
+	// Pass the embedded Files and the directory name
+	err = db.RunMigrations(webassets.Files, "docs")
+	if err != nil {
+		log.Fatalf("Migration runner failed: %v", err)
+	}
+	log.Println("Schema migrations completed successfully.")
+
+	// Read the seed file from memory too!
+	seedContent, err := webassets.Files.ReadFile("docs/seed.sql")
+	if err != nil {
+		log.Fatalf("Failed to read reference seed: %v", err)
+	}
 	if _, err := db.DB.Exec(string(seedContent)); err != nil {
 		log.Fatalf("Failed to seed reference data: %v", err)
 	}
@@ -102,6 +102,9 @@ func main() {
 		},
 		"multiply": func(qty int, price int) int {
 			return qty * price
+		},
+		"subtract": func(value int, deduction int) int {
+			return value - deduction
 		},
 		"formatTime": func(t time.Time) string {
 			return t.Format("02 Jan 2006, 03:04 PM")
@@ -157,21 +160,28 @@ func main() {
 	r.GET("/login", handlers.ShowLogin)
 	r.POST("/login", handlers.HandleLogin)
 	r.POST("/logout", handlers.HandleLogout)
+	r.GET("/platform/login", handlers.ShowPlatformLogin)
+	r.POST("/platform/login", handlers.HandlePlatformLogin)
 
 	// Authenticated routes
 	authGroup := r.Group("/")
 	authGroup.Use(handlers.RequireAuth())
 	{
 		authGroup.GET("/", handlers.ShowDashboard)
-		authGroup.GET("/platform", handlers.ShowPlatformDashboard)
-		authGroup.POST("/platform/accounts", handlers.CreateCustomerAccount)
-		authGroup.POST("/platform/accounts/:id/status", handlers.UpdateAccountStatus)
 		authGroup.POST("/switch-restaurant", handlers.SwitchRestaurant)
+		authGroup.GET("/restaurants/new", handlers.ShowNewRestaurant)
+		authGroup.POST("/restaurants", handlers.CreateRestaurant)
+		authGroup.GET("/team", handlers.ShowTeam)
+		authGroup.POST("/team/create", handlers.CreateRestaurantLogin)
+		authGroup.POST("/team/add-existing", handlers.AddExistingRestaurantLogin)
 
 		// Tables
 		authGroup.GET("/tables", handlers.ShowTables)
 		authGroup.POST("/tables/add", handlers.AddTable)
 		authGroup.POST("/tables/:id/status", handlers.UpdateTableStatus)
+		authGroup.GET("/staff", handlers.ShowStaff)
+		authGroup.POST("/staff/add", handlers.AddRestaurantStaff)
+		authGroup.POST("/staff/:id/status", handlers.UpdateRestaurantStaffStatus)
 
 		// Menu Management
 		authGroup.GET("/menu", handlers.ShowMenu)
@@ -187,6 +197,8 @@ func main() {
 		authGroup.POST("/orders/:id/items/add", handlers.AddOrderItem)
 		authGroup.POST("/orders/:id/items/:item_id/qty", handlers.UpdateItemQty)
 		authGroup.POST("/orders/:id/items/:item_id/override", handlers.OverrideItemPrice)
+		authGroup.POST("/orders/:id/staff", handlers.SetOrderStaff)
+		authGroup.POST("/orders/:id/discount", handlers.SetOrderDiscount)
 		authGroup.POST("/orders/:id/close", handlers.CloseOrder)
 
 		// Mock thermal receipts
@@ -205,6 +217,23 @@ func main() {
 		// Billing & upgrades
 		authGroup.GET("/billing", handlers.ShowBilling)
 		authGroup.POST("/billing/checkout", handlers.TriggerMockCheckout)
+	}
+	platformGroup := r.Group("/platform")
+	platformGroup.Use(handlers.RequirePlatformAuth())
+	{
+		platformGroup.GET("", handlers.ShowPlatformDashboard)
+		platformGroup.POST("/logout", handlers.HandlePlatformLogout)
+		platformGroup.POST("/accounts", handlers.CreateCustomerAccount)
+		platformGroup.POST("/accounts/:id/status", handlers.UpdateAccountStatus)
+		platformGroup.POST("/support", handlers.CreatePlatformSupport)
+		platformGroup.POST("/plans", handlers.CreateSubscriptionPlan)
+		platformGroup.POST("/plans/:id", handlers.UpdateSubscriptionPlan)
+		platformGroup.POST("/plans/:id/features", handlers.UpdatePlanFeatures)
+		platformGroup.POST("/features", handlers.CreatePlatformFeature)
+		platformGroup.POST("/features/:id", handlers.UpdatePlatformFeature)
+		platformGroup.POST("/overrides", handlers.SetAccountFeatureOverride)
+		platformGroup.POST("/overrides/:id/delete", handlers.DeleteAccountFeatureOverride)
+		platformGroup.POST("/accounts/:id/subscription", handlers.UpdateAccountSubscription)
 	}
 
 	// 6. Listen and Serve

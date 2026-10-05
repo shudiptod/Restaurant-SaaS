@@ -37,11 +37,12 @@ type Restaurant struct {
 
 // Table represents a dining table inside a restaurant
 type Table struct {
-	ID           string `json:"id"`
-	RestaurantID string `json:"restaurant_id"`
-	Name         string `json:"name"`
-	Capacity     *int   `json:"capacity"`
-	Status       string `json:"status"` // available, occupied, reserved
+	ID           string     `json:"id"`
+	RestaurantID string     `json:"restaurant_id"`
+	Name         string     `json:"name"`
+	Capacity     *int       `json:"capacity"`
+	Status       string     `json:"status"` // available, occupied, reserved
+	OpenedAt     *time.Time `json:"opened_at"`
 }
 
 // MenuCategory represents a category of menu items
@@ -75,23 +76,41 @@ type Order struct {
 	Status         string     `json:"status"`     // open, closed, cancelled
 	OpenedBy       *string    `json:"opened_by"`
 	OpenedByName   string     `json:"opened_by_name"`
+	StaffID        *string    `json:"staff_id"`
+	StaffName      string     `json:"staff_name"`
 	OpenedAt       time.Time  `json:"opened_at"`
 	ClosedAt       *time.Time `json:"closed_at"`
 	Subtotal       int        `json:"subtotal"` // poisha
 	TaxAmount      int        `json:"tax_amount"`
 	DiscountAmount int        `json:"discount_amount"`
+	DiscountType   *string    `json:"discount_type"`
+	DiscountValue  *int       `json:"discount_value"`
 	TotalAmount    int        `json:"total_amount"`
 }
 
 // OrderItem represents a line item in an order
 type OrderItem struct {
+	ID             string  `json:"id"`
+	OrderID        string  `json:"order_id"`
+	MenuItemID     string  `json:"menu_item_id"`
+	MenuItemName   string  `json:"menu_item_name"` // Joined menu item name
+	Quantity       int     `json:"quantity"`
+	UnitPrice      int     `json:"unit_price"` // poisha (actual price charged)
+	DiscountType   *string `json:"discount_type"`
+	DiscountValue  *int    `json:"discount_value"`
+	DiscountAmount int     `json:"discount_amount"`
+	Notes          *string `json:"notes"`
+}
+
+// RestaurantStaff represents a selectable non-login staff member.
+type RestaurantStaff struct {
 	ID           string  `json:"id"`
-	OrderID      string  `json:"order_id"`
-	MenuItemID   string  `json:"menu_item_id"`
-	MenuItemName string  `json:"menu_item_name"` // Joined menu item name
-	Quantity     int     `json:"quantity"`
-	UnitPrice    int     `json:"unit_price"` // poisha (actual price charged)
-	Notes        *string `json:"notes"`
+	RestaurantID string  `json:"restaurant_id"`
+	Name         string  `json:"name"`
+	IsWaiter     bool    `json:"is_waiter"`
+	IsCashier    bool    `json:"is_cashier"`
+	CustomTitle  *string `json:"custom_title"`
+	IsActive     bool    `json:"is_active"`
 }
 
 // OrderPayment records customer payment methods for split payments or simple checkout
@@ -156,4 +175,3 @@ type RestaurantTaxSettings struct {
 	ServiceChargeRateBps  int       `json:"service_charge_rate_bps"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
-

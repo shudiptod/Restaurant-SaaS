@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/css/styles.css">
   <style>
     .account-table-wrap { overflow-x: auto; }
-    .account-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    .account-table { width: 100%; border-collapse: collapse; min-width: 1180px; }
     .account-table th, .account-table td { padding: 12px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
     .account-table th { color: var(--ink-dim); font-size: 12px; font-weight: 600; }
     .account-table td { font-size: 13px; }
@@ -38,6 +38,7 @@
       {{ if .Error }}<div class="login-error" role="alert">{{ .Error }}</div>{{ end }}
       {{ if .Notice }}<div class="card" role="status" style="padding: 12px 16px; border-color: var(--status-good);">{{ .Notice }}</div>{{ end }}
 
+      {{ if .CanManagePlatform }}
       <section class="card">
         <h3 style="margin-bottom: 18px;">Create customer account</h3>
         <form action="/platform/accounts" method="POST">
@@ -76,6 +77,7 @@
           <button class="btn btn-primary" type="submit">Create customer</button>
         </form>
       </section>
+      {{ end }}
 
       <section>
         <div class="page-header" style="margin-bottom: 14px;">
@@ -83,15 +85,37 @@
         </div>
         <div class="card account-table-wrap" style="padding: 8px 18px;">
           <table class="account-table">
-            <thead><tr><th>Account</th><th>Owner</th><th>Restaurants</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>Account</th><th>Owner</th><th>Restaurants</th><th>Status</th><th>Subscription</th><th>Account action</th></tr></thead>
             <tbody>
               {{ range .Accounts }}
+              {{ $account := . }}
               <tr>
                 <td><strong>{{ .Name }}</strong></td>
                 <td>{{ .OwnerName }}<br><span style="color: var(--ink-dim);">@{{ .OwnerUsername }} · {{ .OwnerEmail }}</span></td>
                 <td>{{ .RestaurantCount }}<br><span style="color: var(--ink-dim);">{{ .Restaurants }}</span></td>
                 <td class="status-{{ .Status }}">{{ .Status }}</td>
                 <td>
+                  <strong>{{ if .PlanName }}{{ .PlanName }}{{ else }}No plan{{ end }}</strong><br>
+                  <span>{{ .SubscriptionStatus }}</span>
+                  {{ if $.CanManagePlatform }}
+                  <form action="/platform/accounts/{{ .ID }}/subscription" method="POST" style="margin-top: 8px; display: grid; gap: 6px;">
+                    <select class="form-control" name="plan_id" required>
+                      {{ range $.Plans }}<option value="{{ .ID }}" {{ if eq .ID $account.PlanID }}selected{{ end }}>{{ .Name }}{{ if not .IsActive }} (inactive){{ end }}</option>{{ end }}
+                    </select>
+                    <select class="form-control" name="status" required>
+                      <option value="trialing" {{ if eq $account.SubscriptionStatus "trialing" }}selected{{ end }}>trialing</option>
+                      <option value="active" {{ if eq $account.SubscriptionStatus "active" }}selected{{ end }}>active</option>
+                      <option value="past_due" {{ if eq $account.SubscriptionStatus "past_due" }}selected{{ end }}>past_due</option>
+                      <option value="canceled" {{ if eq $account.SubscriptionStatus "canceled" }}selected{{ end }}>canceled</option>
+                    </select>
+                    <input class="form-control" type="date" name="period_start" value="{{ .PeriodStart }}" required>
+                    <input class="form-control" type="date" name="period_end" value="{{ .PeriodEnd }}" required>
+                    <button class="btn btn-secondary" type="submit">Save subscription</button>
+                  </form>
+                  {{ end }}
+                </td>
+                <td>
+                  {{ if $.CanManagePlatform }}
                   <form action="/platform/accounts/{{ .ID }}/status" method="POST">
                     {{ if eq .Status "active" }}
                     <input type="hidden" name="status" value="suspended">
@@ -101,13 +125,115 @@
                     <button class="btn btn-secondary" type="submit">Enable</button>
                     {{ end }}
                   </form>
+                  {{ end }}
                 </td>
               </tr>
-              {{ else }}<tr><td colspan="5">No customer accounts yet.</td></tr>{{ end }}
+              {{ else }}<tr><td colspan="6">No customer accounts yet.</td></tr>{{ end }}
             </tbody>
           </table>
         </div>
       </section>
+
+      {{ if .CanManagePlatform }}
+      <section style="margin-top: 32px;">
+        <div class="page-header"><div class="page-title"><h3>Subscription plans</h3><p>{{ len .Plans }} plans</p></div></div>
+        <div class="card" style="margin-bottom: 18px;">
+          <h4 style="margin-bottom: 14px;">Create plan</h4>
+          <form action="/platform/plans" method="POST" class="platform-form-grid">
+            <div class="form-group"><label class="form-label">Name</label><input class="form-control" name="name" required></div>
+            <div class="form-group"><label class="form-label">Code</label><input class="form-control" name="code" pattern="[a-z][a-z0-9_]*" required></div>
+            <div class="form-group"><label class="form-label">Price (BDT)</label><input class="form-control" type="number" name="price" min="0" step="0.01" required></div>
+            <div class="form-group"><label class="form-label">Billing interval</label><select class="form-control" name="billing_interval"><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></div>
+            <button class="btn btn-primary" type="submit">Add plan</button>
+          </form>
+        </div>
+        {{ range .Plans }}
+        {{ $plan := . }}
+        <article class="card" style="margin-bottom: 14px;">
+          <form action="/platform/plans/{{ .ID }}" method="POST" class="platform-form-grid" style="align-items: end;">
+            <div class="form-group"><label class="form-label">Plan name</label><input class="form-control" name="name" value="{{ .Name }}" required></div>
+            <div class="form-group"><label class="form-label">Price (BDT)</label><input class="form-control" type="number" name="price" min="0" step="0.01" value="{{ formatPrice .PriceAmount }}" required></div>
+            <div class="form-group"><label class="form-label">Interval</label><select class="form-control" name="billing_interval"><option value="monthly" {{ if eq .BillingInterval "monthly" }}selected{{ end }}>Monthly</option><option value="yearly" {{ if eq .BillingInterval "yearly" }}selected{{ end }}>Yearly</option></select></div>
+            <div class="form-group"><label class="form-label">Availability</label><select class="form-control" name="is_active"><option value="true" {{ if .IsActive }}selected{{ end }}>Active</option><option value="false" {{ if not .IsActive }}selected{{ end }}>Inactive</option></select></div>
+            <button class="btn btn-secondary" type="submit">Save plan</button>
+          </form>
+          <form action="/platform/plans/{{ .ID }}/features" method="POST" style="margin-top: 18px;">
+            <h4 style="margin-bottom: 12px;">Plan feature values</h4>
+            <div class="platform-form-grid">
+              {{ range .Features }}
+              <div class="form-group">
+                <label class="form-label" for="{{ $plan.Code }}-{{ .Key }}">{{ .Name }} <small>({{ .Key }})</small></label>
+                {{ if eq .ValueType "boolean" }}
+                <select class="form-control" id="{{ $plan.Code }}-{{ .Key }}" name="feature_{{ .Key }}"><option value="false" {{ if or (eq .Value "") (eq .Value "false") }}selected{{ end }}>Disabled</option><option value="true" {{ if eq .Value "true" }}selected{{ end }}>Enabled</option></select>
+                {{ else if eq .ValueType "number" }}
+                <input class="form-control" id="{{ $plan.Code }}-{{ .Key }}" type="number" min="0" name="feature_{{ .Key }}" value="{{ if .Value }}{{ .Value }}{{ else }}0{{ end }}" required>
+                {{ else }}
+                <input class="form-control" id="{{ $plan.Code }}-{{ .Key }}" name="feature_{{ .Key }}" value="{{ .Value }}" required>
+                {{ end }}
+              </div>
+              {{ end }}
+            </div>
+            <button class="btn btn-secondary" type="submit">Save feature values</button>
+          </form>
+        </article>
+        {{ end }}
+      </section>
+
+      <section style="margin-top: 32px;">
+        <div class="page-header"><div class="page-title"><h3>Feature catalog</h3><p>{{ len .Features }} features</p></div></div>
+        <div class="card" style="margin-bottom: 18px;">
+          <form action="/platform/features" method="POST" class="platform-form-grid">
+            <div class="form-group"><label class="form-label">Key</label><input class="form-control" name="key" pattern="[a-z][a-z0-9_]*" required></div>
+            <div class="form-group"><label class="form-label">Name</label><input class="form-control" name="name" required></div>
+            <div class="form-group"><label class="form-label">Description</label><input class="form-control" name="description"></div>
+            <div class="form-group"><label class="form-label">Value type</label><select class="form-control" name="value_type"><option value="boolean">Boolean</option><option value="number">Number</option><option value="text">Text</option></select></div>
+            <button class="btn btn-primary" type="submit">Add feature</button>
+          </form>
+        </div>
+        <div class="card account-table-wrap">
+          <table class="account-table"><thead><tr><th>Key</th><th>Name</th><th>Description</th><th>Type</th><th>Update</th></tr></thead><tbody>
+            {{ range .Features }}<tr><td>{{ .Key }}</td><td colspan="4"><form action="/platform/features/{{ .ID }}" method="POST" style="display: grid; grid-template-columns: 1fr 2fr 2fr 1fr auto; gap: 8px; align-items: center;">
+              <span>{{ .Key }}</span><input class="form-control" name="name" value="{{ .Name }}" required><input class="form-control" name="description" value="{{ .Description }}">
+              <select class="form-control" name="value_type"><option value="boolean" {{ if eq .ValueType "boolean" }}selected{{ end }}>Boolean</option><option value="number" {{ if eq .ValueType "number" }}selected{{ end }}>Number</option><option value="text" {{ if eq .ValueType "text" }}selected{{ end }}>Text</option></select>
+              <button class="btn btn-secondary" type="submit">Save</button></form></td></tr>{{ end }}
+          </tbody></table>
+        </div>
+      </section>
+
+      <section style="margin-top: 32px;">
+        <div class="page-header"><div class="page-title"><h3>Account feature overrides</h3><p>Reason required for each exception</p></div></div>
+        <div class="card" style="margin-bottom: 18px;">
+          <form action="/platform/overrides" method="POST" class="platform-form-grid">
+            <div class="form-group"><label class="form-label">Account</label><select class="form-control" name="account_id" required>{{ range .Accounts }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></div>
+            <div class="form-group"><label class="form-label">Feature</label><select class="form-control" name="feature_id" required>{{ range .Features }}<option value="{{ .ID }}">{{ .Name }} ({{ .Key }})</option>{{ end }}</select></div>
+            <div class="form-group"><label class="form-label">Override value</label><input class="form-control" name="value" required></div>
+            <div class="form-group"><label class="form-label">Reason</label><input class="form-control" name="reason" required></div>
+            <button class="btn btn-primary" type="submit">Save override</button>
+          </form>
+        </div>
+        <div class="card account-table-wrap"><table class="account-table"><thead><tr><th>Account</th><th>Feature</th><th>Value</th><th>Reason</th><th></th></tr></thead><tbody>
+          {{ range .Overrides }}<tr><td>{{ .AccountName }}</td><td>{{ .FeatureName }}</td><td>{{ .Value }}</td><td>{{ .Reason }}</td><td><form action="/platform/overrides/{{ .ID }}/delete" method="POST"><button class="btn btn-secondary" type="submit">Remove</button></form></td></tr>
+          {{ else }}<tr><td colspan="5">No account overrides.</td></tr>{{ end }}
+        </tbody></table></div>
+      </section>
+
+      <section style="margin-top: 32px;">
+        <div class="page-header"><div class="page-title"><h3>Platform support</h3><p>{{ len .SupportUsers }} support accounts</p></div></div>
+        <div class="card" style="margin-bottom: 18px;">
+          <form action="/platform/support" method="POST" class="platform-form-grid">
+            <div class="form-group"><label class="form-label">Full name</label><input class="form-control" name="full_name" required></div>
+            <div class="form-group"><label class="form-label">Username</label><input class="form-control" name="username" required autocomplete="off"></div>
+            <div class="form-group"><label class="form-label">Email</label><input class="form-control" type="email" name="email" required></div>
+            <div class="form-group"><label class="form-label">Initial password</label><input class="form-control" type="password" name="password" minlength="12" required autocomplete="new-password"></div>
+            <button class="btn btn-primary" type="submit">Create support account</button>
+          </form>
+        </div>
+        <div class="card account-table-wrap"><table class="account-table"><thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Access</th></tr></thead><tbody>
+          {{ range .SupportUsers }}<tr><td>{{ .Name }}</td><td>{{ .Username }}</td><td>{{ .Email }}</td><td>Read-only support</td></tr>
+          {{ else }}<tr><td colspan="4">No support accounts.</td></tr>{{ end }}
+        </tbody></table></div>
+      </section>
+      {{ end }}
     </main>
   </div>
 </body>
